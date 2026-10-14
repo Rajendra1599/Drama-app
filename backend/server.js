@@ -458,54 +458,56 @@ app.post('/api/payment/initiate', paymentLimiter, async (req, res, next) => {
 
     const txnId = 'MD_' + crypto.randomBytes(4).toString('hex').toUpperCase();
 
-    // 1. If Razorpay client is initialized, create Razorpay Subscription or Order
+    // 1. If Razorpay client is initialized, create Razorpay Subscription or Payment Link
     if (razorpayClient && RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) {
       let rzpSub = null;
-      let rzpOrder = null;
+      let shortUrl = null;
+      const activePlanId = (RAZORPAY_PLAN_ID && RAZORPAY_PLAN_ID.trim().length > 3)
+        ? RAZORPAY_PLAN_ID.trim()
+        : 'plan_TnowbZvbQqQfyE';
 
-      // Try creating Razorpay Subscription if Plan ID is configured
-      if (RAZORPAY_PLAN_ID && RAZORPAY_PLAN_ID.trim().length > 3) {
-        try {
-          rzpSub = await razorpayClient.subscriptions.create({
-            plan_id: RAZORPAY_PLAN_ID.trim(),
-            total_count: 12,
-            quantity: 1,
-            customer_notify: 1,
-            addons: [
-              {
-                item: {
-                  name: 'VIP 1-Day Trial Pass',
-                  amount: Math.round(amount * 100), // 100 paise = ₹1
-                  currency: 'INR'
-                }
+      // Attempt creating official Razorpay Subscription
+      try {
+        rzpSub = await razorpayClient.subscriptions.create({
+          plan_id: activePlanId,
+          total_count: 12,
+          quantity: 1,
+          customer_notify: 1,
+          addons: [
+            {
+              item: {
+                name: 'VIP 1-Day Trial Pass',
+                amount: Math.round(amount * 100), // 100 paise = ₹1
+                currency: 'INR'
               }
-            ],
-            notes: {
-              userId,
-              txnId
             }
-          });
-          logger.info(`[Razorpay] Created subscription ${rzpSub.id} for user ${userId}`);
-        } catch (subErr) {
-          logger.warn('[Razorpay] Subscription create failed, falling back to standard Order:', { error: subErr.message });
-        }
-      }
-
-      // If subscription couldn't be created or plan is empty, create an Order for ₹1
-      if (!rzpSub) {
+          ],
+          notes: {
+            userId,
+            txnId
+          }
+        });
+        shortUrl = rzpSub.short_url;
+        logger.info(`[Razorpay] Created subscription ${rzpSub.id} for user ${userId}, link: ${shortUrl}`);
+      } catch (subErr) {
+        logger.warn('[Razorpay] Subscription creation failed, creating Payment Link:', { error: subErr.message });
         try {
-          rzpOrder = await razorpayClient.orders.create({
+          const pl = await razorpayClient.paymentLink.create({
             amount: Math.round(amount * 100),
             currency: 'INR',
-            receipt: txnId,
-            notes: {
-              userId,
-              planId
-            }
+            accept_partial: false,
+            description: 'StoryUp VIP 1-Day Trial AutoPay',
+            customer: {
+              name: 'VIP Member',
+              email: 'subscriber@storyup.tv',
+              contact: '+919876543210'
+            },
+            notes: { userId, txnId }
           });
-          logger.info(`[Razorpay] Created ₹${amount} Order ${rzpOrder.id} for user ${userId}`);
-        } catch (orderErr) {
-          logger.error('[Razorpay] Order create failed:', { error: orderErr.message });
+          shortUrl = pl.short_url;
+          logger.info(`[Razorpay] Created fallback Payment Link ${pl.id}, url: ${shortUrl}`);
+        } catch (plErr) {
+          logger.error('[Razorpay] Payment Link creation failed:', { error: plErr.message });
         }
       }
 
@@ -518,7 +520,7 @@ app.post('/api/payment/initiate', paymentLimiter, async (req, res, next) => {
         paymentMethod: 'Razorpay AutoPay (₹1 Trial)',
         status: 'PENDING',
         subscriptionId: rzpSub ? rzpSub.id : null,
-        orderId: rzpOrder ? rzpOrder.id : null,
+        shortUrl,
         createdAt: Date.now()
       };
       await db.saveTransaction(txnId, transaction);
@@ -529,14 +531,14 @@ app.post('/api/payment/initiate', paymentLimiter, async (req, res, next) => {
         message: 'Razorpay subscription order initiated',
         transactionId: txnId,
         subscriptionId: rzpSub ? rzpSub.id : null,
-        orderId: rzpOrder ? rzpOrder.id : null,
-        shortUrl: rzpSub?.short_url || null,
+        shortUrl: shortUrl,
         keyId: RAZORPAY_KEY_ID,
         amount,
         currency: 'INR',
         status: 'PENDING'
       });
     }
+
 
     // 2. If Razorpay keys not configured yet in .env, run in test simulation mode
     const transaction = {
