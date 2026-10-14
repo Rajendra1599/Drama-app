@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "663742323718",
+    "project_id": "micro-drama-f5c02",
+    "storage_bucket": "micro-drama-f5c02.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:663742323718:android:f088563b5dbe179b763787",
+        "android_client_info": {
+          "package_name": "com.aistudio.microdrama.rvtkzn"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "663742323718-l7ep96jf610he861dor1bsnj41csk41i.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.microdrama.rvtkzn",
+            "certificate_hash": "39f3f4b33805f59558261d739470dae8bdd64464"
+          }
+        },
+        {
+          "client_id": "663742323718-l7ep96jf610he861dor1bsnj41csk41i.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.microdrama.rvtkzn",
+            "certificate_hash": "c7ddd23fdc41260e9e2b87d6e2675c4a18993815"
+          }
+        },
+        {
+          "client_id": "663742323718-7c68ineulji7v2nb8b4pu85aivfooj20.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDc_NH46i0R1LDdWkduH3oC5a0065vwAjY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "663742323718-7c68ineulji7v2nb8b4pu85aivfooj20.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

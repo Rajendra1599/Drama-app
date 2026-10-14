@@ -1,0 +1,6 @@
+{
+  "name": "StoryUp",
+  "description": "StoryUp - Premium vertical micro-drama streaming OTT platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

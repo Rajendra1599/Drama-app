@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="microdrama_app">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>StoryUp - India's Fastest OTT MicroDrama</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    video, flt-platform-view {
+      pointer-events: none !important;
+      cursor: pointer !important;
+    }
+  </style>
+  <!-- Razorpay Standard Checkout SDK -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <!-- Firebase App & Auth SDKs (Compat v10) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script>
+
+    // Firebase Web Configuration holder
+    window.firebaseConfig = {
+      apiKey: "AIzaSyCfP0Rehsu73-fxZn8Lo2K7V7-DuIpgeDk",
+      authDomain: "storyup-ceaf2.firebaseapp.com",
+      projectId: "storyup-ceaf2",
+      storageBucket: "storyup-ceaf2.firebasestorage.app",
+      messagingSenderId: "505349965003",
+      appId: "1:505349965003:web:6bff4f7e6f397bd0c1c74e"
+    };
+
+    window.initFirebase = function(config) {
+      if (config && config.apiKey) {
+        window.firebaseConfig = config;
+        if (typeof firebase !== 'undefined' && !firebase.apps.length) {
+          firebase.initializeApp(config);
+        }
+      }
+    };
+
+    // Google Sign-In with device account chooser popup (Firebase or Google Identity)
+    window.storyUpGoogleSignIn = function() {
+      return new Promise((resolve, reject) => {
+        // Firebase Authentication Popup (Google Sign-In)
+        if (window.firebaseConfig && window.firebaseConfig.apiKey && window.firebaseConfig.apiKey.length > 5) {
+          try {
+            if (typeof firebase !== 'undefined') {
+              if (!firebase.apps.length) {
+                firebase.initializeApp(window.firebaseConfig);
+              }
+              const provider = new firebase.auth.GoogleAuthProvider();
+              provider.addScope('email');
+              provider.addScope('profile');
+              provider.setCustomParameters({ prompt: 'select_account' });
+              firebase.auth().signInWithPopup(provider)
+                .then((result) => {
+                  const user = result.user;
+                  resolve(JSON.stringify({
+                    success: true,
+                    email: user.email,
+                    displayName: user.displayName || user.email.split('@')[0],
+                    photoUrl: user.photoURL || '',
+                    uid: user.uid,
+                    idToken: ''
+                  }));
+                })
+                .catch((err) => {
+                  reject(err.message || 'Firebase sign-in failed');
+                });
+              return;
+            }
+          } catch (e) {
+            reject('Firebase initialization error: ' + e);
+            return;
+          }
+        }
+        reject('Firebase is not yet configured. Please set FIREBASE_API_KEY in your .env file.');
+      });
+    };
+
+    // Listen for Flutter messages to trigger account chooser or init firebase
+    window.addEventListener('message', function(event) {
+      if (event.data === 'TRIGGER_GOOGLE_SIGN_IN') {
+        window.storyUpGoogleSignIn()
+          .then(function(jsonStr) {
+            const data = JSON.parse(jsonStr);
+            data.storyup_auth = true;
+            window.postMessage(JSON.stringify(data), '*');
+          })
+          .catch(function(err) {
+            window.postMessage(JSON.stringify({
+              storyup_auth: true,
+              error: String(err)
+            }), '*');
+          });
+      } else if (typeof event.data === 'string' && event.data.includes('INIT_FIREBASE')) {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.action === 'INIT_FIREBASE' && payload.config) {
+            window.firebaseConfig = payload.config;
+            if (typeof firebase !== 'undefined' && !firebase.apps.length && payload.config.apiKey && payload.config.apiKey.length > 5) {
+              firebase.initializeApp(payload.config);
+            }
+          }
+        } catch(e) {}
+      } else if (typeof event.data === 'string' && event.data.includes('OPEN_RAZORPAY')) {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.action === 'OPEN_RAZORPAY' && payload.options) {
+            window.openRazorpayCheckout(payload.options).then(function(resStr) {
+              window.postMessage(JSON.stringify({
+                storyup_razorpay: true,
+                result: JSON.parse(resStr)
+              }), '*');
+            });
+          }
+        } catch(e) {}
+      }
+    });
+
+
+    // Razorpay Web Checkout Bridge
+    window.openRazorpayCheckout = function(optionsJson) {
+      return new Promise((resolve) => {
+        try {
+          const opts = (typeof optionsJson === 'string') ? JSON.parse(optionsJson) : optionsJson;
+          opts.handler = function(response) {
+            resolve(JSON.stringify({
+              success: true,
+              razorpay_payment_id: response.razorpay_payment_id || '',
+              razorpay_subscription_id: response.razorpay_subscription_id || '',
+              razorpay_order_id: response.razorpay_order_id || '',
+              razorpay_signature: response.razorpay_signature || ''
+            }));
+          };
+          opts.modal = {
+            ondismiss: function() {
+              resolve(JSON.stringify({
+                success: false,
+                cancelled: true,
+                message: 'Checkout closed by user'
+              }));
+            }
+          };
+          const rzp = new Razorpay(opts);
+          rzp.on('payment.failed', function(resp) {
+            resolve(JSON.stringify({
+              success: false,
+              error: resp.error ? resp.error.description : 'Payment failed'
+            }));
+          });
+          rzp.open();
+        } catch (e) {
+          resolve(JSON.stringify({
+            success: false,
+            error: String(e)
+          }));
+        }
+      });
+    };
+  </script>
+
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

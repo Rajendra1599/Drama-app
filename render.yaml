@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: storyup-ott-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: MONGODB_URI
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CLOUDINARY_UPLOAD_PRESET
+        value: storyup_vertical_preset
+      - key: PHONEPE_MERCHANT_ID
+        value: M220610193189
+      - key: PHONEPE_SALT_KEY
+        value: 099eb0cd-02cf-4e2a-8aca-3e6c6aff0399
+      - key: PHONEPE_SALT_INDEX
+        value: 1
+      - key: PHONEPE_VPA
+        value: microdrama.autopay@ybl
+      - key: ADMIN_API_KEY
+        value: adm_secret_key_microdrama_master_2026
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CONTENT_ENCRYPTION_KEY
+        generateValue: true
