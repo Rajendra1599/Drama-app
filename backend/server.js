@@ -903,9 +903,13 @@ app.post('/api/episodes/authorize', async (req, res, next) => {
     const adConfig = await db.getAdConfig();
     const bypassPayment = adConfig && adConfig.bypassPayment;
 
+    // Fetch real episode video URL from DB if available
+    const existingEp = await db.getEpisode(seriesId, num);
+    const customVideoUrl = existingEp ? existingEp.videoUrl : null;
+
     // Episodes 1-5: Always Free
     if (num <= 5 || bypassPayment) {
-      const streamData = videoCdnService.generateSignedStreamUrl(seriesId, num, userId || 'anon', false);
+      const streamData = videoCdnService.generateSignedStreamUrl(seriesId, num, userId || 'anon', false, customVideoUrl);
       return res.json({
         authorized: true,
         reason: bypassPayment ? 'AD_SUPPORTED_STREAM' : 'FREE_EPISODE',
@@ -936,7 +940,7 @@ app.post('/api/episodes/authorize', async (req, res, next) => {
       });
     }
 
-    const streamData = videoCdnService.generateSignedStreamUrl(seriesId, num, userId, true);
+    const streamData = videoCdnService.generateSignedStreamUrl(seriesId, num, userId, true, customVideoUrl);
     res.json({
       authorized: true,
       reason: 'VIP_UNLOCKED',
@@ -1065,7 +1069,14 @@ app.get('/api/dramas/:id/episodes', async (req, res, next) => {
   try {
     const { id } = req.params;
     const episodes = await db.getEpisodesBySeries(id);
-    res.json({ success: true, count: episodes.length, episodes });
+    const signedEpisodes = episodes.map(ep => {
+      const epObj = (ep && typeof ep.toObject === 'function') ? ep.toObject() : { ...ep };
+      if (epObj.videoUrl && epObj.videoUrl.includes('.cloudfront.net')) {
+        epObj.videoUrl = videoCdnService.signCloudFrontUrl(epObj.videoUrl);
+      }
+      return epObj;
+    });
+    res.json({ success: true, count: signedEpisodes.length, episodes: signedEpisodes });
   } catch (e) {
     next(e);
   }
@@ -1075,7 +1086,14 @@ app.get('/api/admin/dramas/:id/episodes', async (req, res, next) => {
   try {
     const { id } = req.params;
     const episodes = await db.getEpisodesBySeries(id);
-    res.json({ success: true, count: episodes.length, episodes });
+    const signedEpisodes = episodes.map(ep => {
+      const epObj = (ep && typeof ep.toObject === 'function') ? ep.toObject() : { ...ep };
+      if (epObj.videoUrl && epObj.videoUrl.includes('.cloudfront.net')) {
+        epObj.videoUrl = videoCdnService.signCloudFrontUrl(epObj.videoUrl);
+      }
+      return epObj;
+    });
+    res.json({ success: true, count: signedEpisodes.length, episodes: signedEpisodes });
   } catch (e) {
     next(e);
   }
@@ -1251,12 +1269,15 @@ app.post('/api/admin/episodes', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'seriesId, episodeNumber, videoUrl required' });
     }
     const epNum = parseInt(episodeNumber, 10);
+    const optimizedVideoUrl = videoCdnService.optimizeVideoUrlForStreaming(videoUrl);
+    const optimizedThumbnailUrl = req.body.thumbnailUrl || videoCdnService.getCloudinaryThumbnailFromVideo(optimizedVideoUrl);
     const epData = {
       id: `${seriesId}_ep_${epNum}`,
       seriesId,
       episodeNumber: epNum,
       title: title || `Episode ${epNum}`,
-      videoUrl,
+      videoUrl: optimizedVideoUrl,
+      thumbnailUrl: optimizedThumbnailUrl,
       durationSeconds: parseInt(durationSeconds, 10) || 90,
       isVipLocked: epNum > 5,
       showAd: showAd !== false && showAd !== 'false',

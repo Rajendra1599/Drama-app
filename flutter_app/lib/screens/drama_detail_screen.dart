@@ -320,16 +320,12 @@ class _DramaDetailScreenState extends State<DramaDetailScreen>
                     itemBuilder: (context, index) {
                       final ep = episodes[index];
                       final isLocked =
-                          drama.isEpisodePaywallLocked(ep.episodeNumber);
+                          drama.isEpisodePaywallLocked(ep.episodeNumber, seriesId: series.id);
 
                       return InkWell(
                         onTap: () {
-                          if (isLocked) {
-                            drama.openAutoPayDialog();
-                          } else {
-                            drama.startOrResumeSeries(series.id,
-                                episodeNumber: ep.episodeNumber);
-                          }
+                          drama.startOrResumeSeries(series.id,
+                              episodeNumber: ep.episodeNumber);
                         },
                         child: Container(
                           decoration: BoxDecoration(
@@ -359,7 +355,7 @@ class _DramaDetailScreenState extends State<DramaDetailScreen>
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    isLocked ? 'VIP' : 'FREE',
+                                    isLocked ? 'AD/VIP' : 'FREE',
                                     style: TextStyle(
                                       color: isLocked
                                           ? AppTheme.dramaGold

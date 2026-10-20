@@ -120,6 +120,21 @@ class _ExploreScreenState extends State<ExploreScreen> with WidgetsBindingObserv
     }
   }
 
+  static String _optimizeVideoUrl(String rawUrl) {
+    var url = rawUrl.trim();
+    if (url.isEmpty) return url;
+
+    if (url.contains('res.cloudinary.com')) {
+      if (url.contains('/upload/') && !url.contains('/video/upload/')) {
+        url = url.replaceFirst('/upload/', '/video/upload/');
+      }
+      if (!url.contains('q_auto')) {
+        url = url.replaceFirst('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
+      }
+    }
+    return url;
+  }
+
   Future<void> _initAndPlayVideo(String url) async {
     _currentLoadedUrl = url;
     if (_videoController != null) {
@@ -133,9 +148,10 @@ class _ExploreScreenState extends State<ExploreScreen> with WidgetsBindingObserv
     _isInitialized = false;
     if (mounted) setState(() {});
 
+    final optimizedUrl = _optimizeVideoUrl(url);
     try {
       final controller = VideoPlayerController.networkUrl(
-        Uri.parse(url),
+        Uri.parse(optimizedUrl),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
       );
       _videoController = controller;
@@ -181,6 +197,7 @@ class _ExploreScreenState extends State<ExploreScreen> with WidgetsBindingObserv
         episodes: episodes,
         activeEpisodeNumber: 1,
         isVip: drama.isVipActive,
+        isEpisodeLocked: (epNumber) => drama.isEpisodePaywallLocked(epNumber, seriesId: series.id),
         onSelectEpisode: (epNum) {
           Navigator.pop(ctx);
           drama.startOrResumeSeries(series.id, episodeNumber: epNum);

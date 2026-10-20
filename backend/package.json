@@ -4,7 +4,7 @@
   "description": "Production High-Concurrency Backend Server for MicroDrama OTT: Stateless REST API, Redis Caching, BullMQ Async Workers, PhonePe AutoPay, and HLS Video Delivery",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "nodemon server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {

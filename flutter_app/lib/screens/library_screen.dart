@@ -102,7 +102,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                     try {
                       series = drama.allSeries
                           .firstWhere((s) => s.id == item.seriesId);
-                    } catch (e) {}
+                    } catch (_) {
+                      // Series not loaded yet or removed
+                    }
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),

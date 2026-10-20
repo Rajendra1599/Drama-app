@@ -1,28 +1,20 @@
 {
   "project_info": {
-    "project_number": "663742323718",
-    "project_id": "micro-drama-f5c02",
-    "storage_bucket": "micro-drama-f5c02.firebasestorage.app"
+    "project_number": "505349965003",
+    "project_id": "storyup-ceaf2",
+    "storage_bucket": "storyup-ceaf2.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:663742323718:android:f088563b5dbe179b763787",
+        "mobilesdk_app_id": "1:505349965003:android:0abe9eac3ca55fd1c1c74e",
         "android_client_info": {
           "package_name": "com.aistudio.microdrama.rvtkzn"
         }
       },
       "oauth_client": [
         {
-          "client_id": "663742323718-l7ep96jf610he861dor1bsnj41csk41i.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.aistudio.microdrama.rvtkzn",
-            "certificate_hash": "39f3f4b33805f59558261d739470dae8bdd64464"
-          }
-        },
-        {
-          "client_id": "663742323718-l7ep96jf610he861dor1bsnj41csk41i.apps.googleusercontent.com",
+          "client_id": "505349965003-rnrm0bipkas36241b98kagtl0sdm72q4.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.aistudio.microdrama.rvtkzn",
@@ -30,20 +22,20 @@
           }
         },
         {
-          "client_id": "663742323718-7c68ineulji7v2nb8b4pu85aivfooj20.apps.googleusercontent.com",
+          "client_id": "505349965003-9ungrjvf5qulmj6h0r1hrk2iij5aucmp.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDc_NH46i0R1LDdWkduH3oC5a0065vwAjY"
+          "current_key": "AIzaSyDoGB7ptML-XFxVusXhpbnQmKTzN2K3AvQ"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "663742323718-7c68ineulji7v2nb8b4pu85aivfooj20.apps.googleusercontent.com",
+              "client_id": "505349965003-9ungrjvf5qulmj6h0r1hrk2iij5aucmp.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

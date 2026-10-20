@@ -3,11 +3,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 class GoogleAuthWebService {
   static final GoogleSignIn _googleSignIn = GoogleSignIn(
-    serverClientId: '663742323718-7c68ineulji7v2nb8b4pu85aivfooj20.apps.googleusercontent.com',
-    scopes: <String>[
-      'email',
-      'https://www.googleapis.com/auth/userinfo.profile',
-    ],
+    serverClientId: '505349965003-9ungrjvf5qulmj6h0r1hrk2iij5aucmp.apps.googleusercontent.com',
+    scopes: <String>['email'],
   );
 
   /// Signs out and disconnects Google account completely
@@ -34,21 +31,15 @@ class GoogleAuthWebService {
         account = await _googleSignIn.signIn();
       } catch (e) {
         debugPrint('[GoogleSignIn] Standard signIn failed: $e');
-        // Fallback: If serverClientId triggered ApiException on Play Services, try without serverClientId
+        // Fallback: Attempt sign in silently if available, or retry
         try {
-          final fallbackSignIn = GoogleSignIn(
-            scopes: <String>[
-              'email',
-              'https://www.googleapis.com/auth/userinfo.profile',
-            ],
-          );
-          try {
-            await fallbackSignIn.signOut();
-          } catch (_) {}
-          account = await fallbackSignIn.signIn();
+          account = await _googleSignIn.signInSilently();
         } catch (e2) {
           debugPrint('[GoogleSignIn] Fallback signIn failed: $e2');
-          return {'error': e2.toString()};
+          return {'error': e.toString()};
+        }
+        if (account == null) {
+          return {'error': e.toString()};
         }
       }
 

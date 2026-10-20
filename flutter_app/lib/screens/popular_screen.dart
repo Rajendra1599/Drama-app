@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/drama_provider.dart';
-import '../services/payment_service.dart';
+import '../models/user_role.dart';
 import '../config/theme.dart';
 
+/// StoryUp OTT - VIP & Payment (Under Development) Screen
 class PopularScreen extends StatelessWidget {
   const PopularScreen({super.key});
 
@@ -15,7 +16,7 @@ class PopularScreen extends StatelessWidget {
       backgroundColor: const Color(0xFF09090D),
       appBar: AppBar(
         title: const Text(
-          'VIP MEMBERSHIP',
+          'VIP & PAYMENTS',
           style: TextStyle(
             color: Colors.white,
             fontSize: 16,
@@ -27,290 +28,184 @@ class PopularScreen extends StatelessWidget {
         elevation: 0,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 1. Compact VIP Header Card
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppTheme.storyTvPink.withValues(alpha: 0.2),
-                      const Color(0xFF161622),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Glowing Construction / VIP Icon
+                Container(
+                  width: 90,
+                  height: 90,
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade900.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.amber.shade600, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.amber.shade600.withValues(alpha: 0.25),
+                        blurRadius: 30,
+                        spreadRadius: 2,
+                      ),
                     ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.storyTvPink.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppTheme.storyTvPink.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.workspace_premium, color: AppTheme.dramaGold, size: 24),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          Text(
-                            'STORYUP VIP PASS',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Unlock all episodes & premium short series',
-                            style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // 2. Plan Card (₹1 Trial + ₹599/mo AutoPay)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF13131C),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.storyTvPink, width: 1.2),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '1-Day VIP Trial Pass',
-                          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppTheme.storyTvPink,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text(
-                            'SPECIAL OFFER',
-                            style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Price Breakdown
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: const [
-                        Text(
-                          '₹1',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 26,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        Text(
-                          '₹599',
-                          style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 13,
-                            decoration: TextDecoration.lineThrough,
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        Text(
-                          'for 24 hours, then ₹599/month',
-                          style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    const Divider(color: Colors.white12, height: 1),
-                    const SizedBox(height: 8),
-
-                    // Moderate Benefit Rows
-                    _benefitRow('24-Hour full VIP access to every single episode'),
-                    _benefitRow('AutoPay mandate sets up automatically at ₹599/month'),
-                    _benefitRow('Full HD streaming with zero ads & instant playback'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // 3. Compact UPI Selector
-              const Text(
-                'Select UPI App for AutoPay:',
-                style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Expanded(
-                    child: _UpiButton(
-                      title: 'PhonePe',
-                      icon: Icons.account_balance_wallet,
-                      selected: drama.selectedUpiTarget == UpiAppTarget.phonePe,
-                      onTap: () => drama.setSelectedUpiTarget(UpiAppTarget.phonePe),
+                  child: Center(
+                    child: Icon(
+                      Icons.construction_rounded,
+                      color: Colors.amber.shade400,
+                      size: 44,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _UpiButton(
-                      title: 'Google Pay',
-                      icon: Icons.payment,
-                      selected: drama.selectedUpiTarget == UpiAppTarget.gpay,
-                      onTap: () => drama.setSelectedUpiTarget(UpiAppTarget.gpay),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _UpiButton(
-                      title: 'Paytm / UPI',
-                      icon: Icons.qr_code,
-                      selected: drama.selectedUpiTarget == UpiAppTarget.paytm,
-                      onTap: () => drama.setSelectedUpiTarget(UpiAppTarget.paytm),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
+                ),
+                const SizedBox(height: 24),
 
-              // 4. Pay CTA Button
-              SizedBox(
-                height: 46,
-                child: ElevatedButton(
-                  onPressed: () => drama.initiatePhonePePayment(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.storyTvPink,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    elevation: 4,
+                // Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade500,
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Text(
-                    'PAY ₹1 & START 1-DAY TRIAL ➔',
+                    'UNDER DEVELOPMENT',
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
+                      color: Colors.black,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 11,
+                      letterSpacing: 0.8,
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
+                const SizedBox(height: 14),
 
-              // 5. Strict Non-Refundable & AutoPay Notice
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF16161D),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.white10),
+                // Title
+                const Text(
+                  'Payment & VIP Under Development',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                child: Column(
-                  children: const [
-                    Text(
-                      '⚠️ STRICT NON-REFUNDABLE POLICY: Once any transaction is processed, it is strictly non-refundable.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Color(0xFFFFB74D), fontSize: 10, fontWeight: FontWeight.bold),
+                const SizedBox(height: 8),
+
+                // Subtitle
+                const Text(
+                  'All payment gateways, UPI AutoPay, and VIP subscriptions are currently under development. You do not need to make any payment!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Feature Highlights Card
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161622),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildInfoRow(
+                        icon: Icons.tv_rounded,
+                        title: 'All Series & Dramas Available',
+                        subtitle: 'Episodes 1 & 2 are 100% free with instant playback.',
+                      ),
+                      const Divider(color: Colors.white10, height: 20),
+                      _buildInfoRow(
+                        icon: Icons.ad_units_rounded,
+                        title: 'Unlock Every 2 Episodes with Ads',
+                        subtitle: 'Watch a quick Google AdMob ad to unlock the next 2 episodes.',
+                      ),
+                      const Divider(color: Colors.white10, height: 20),
+                      _buildInfoRow(
+                        icon: Icons.storefront_rounded,
+                        title: 'Google Play Store Release',
+                        subtitle: 'Official subscriptions will go live once published to Play Store.',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Navigation Button to Home
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => drama.navigateTo(AppScreen.home),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.storyTvPink,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Paying ₹1 activates a 1-day (24h) trial and sets up an automated monthly AutoPay mandate of ₹599 on your phone. You can cancel recurring mandate anytime in your UPI app.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppTheme.textMuted, fontSize: 10, height: 1.3),
+                    child: const Text(
+                      'START WATCHING DRAMAS ➔',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppTheme.storyTvPink.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: AppTheme.storyTvPink, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 11,
+                  height: 1.3,
                 ),
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  static Widget _benefitRow(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.check_circle, color: AppTheme.storyTvPink, size: 14),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 11)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _UpiButton extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _UpiButton({
-    required this.title,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? AppTheme.storyTvPink.withValues(alpha: 0.15) : const Color(0xFF14141C),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: selected ? AppTheme.storyTvPink : Colors.white12,
-            width: 1.0,
-          ),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: selected ? AppTheme.storyTvPink : Colors.white70, size: 18),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: TextStyle(
-                color: selected ? Colors.white : Colors.white70,
-                fontSize: 10,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 }

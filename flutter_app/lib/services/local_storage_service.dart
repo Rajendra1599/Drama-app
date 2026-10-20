@@ -77,6 +77,16 @@ class LocalStorageService {
     }).whereType<WatchHistory>().toList();
   }
 
+  static const String _keyUnlockedEpisodes = 'unlocked_episodes_list';
+
+  static List<String> getUnlockedEpisodes() {
+    return _prefs?.getStringList(_keyUnlockedEpisodes) ?? [];
+  }
+
+  static Future<void> saveUnlockedEpisodes(List<String> list) async {
+    await _prefs?.setStringList(_keyUnlockedEpisodes, list);
+  }
+
   static Future<void> saveWatchHistory(List<WatchHistory> history) async {
     final encoded = history.map((item) => jsonEncode(item.toJson())).toList();
     await _prefs?.setStringList(_keyHistory, encoded);

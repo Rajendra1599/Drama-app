@@ -124,14 +124,14 @@ class ProfileScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          isVip ? 'StoryUp VIP Pass: ACTIVE' : 'Free Membership Tier',
+                          isVip ? 'StoryUp VIP Pass: ACTIVE' : 'Ad-Supported Free Tier',
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           isVip
-                              ? 'All 50+ series & episodes fully unlocked'
-                              : 'Episodes 1–5 free • Unlock 1-day pass for ₹1',
+                              ? 'All series & episodes fully unlocked'
+                              : 'All episodes unlocked with ads • VIP Under Working',
                           style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
                         ),
                       ],
@@ -141,11 +141,22 @@ class ProfileScreen extends StatelessWidget {
                     ElevatedButton(
                       onPressed: () => drama.openAutoPayDialog(),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.storyTvPink,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        backgroundColor: const Color(0xFF282838),
+                        side: BorderSide(color: Colors.amber.shade700, width: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
-                      child: const Text('₹1 Pass', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.construction, size: 12, color: Colors.amber.shade400),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Under Development',
+                            style: TextStyle(color: Colors.amber.shade300, fontWeight: FontWeight.bold, fontSize: 11),
+                          ),
+                        ],
+                      ),
                     )
                   else
                     OutlinedButton(
@@ -249,11 +260,7 @@ class ProfileScreen extends StatelessWidget {
               icon: Icons.receipt_long,
               title: 'Payment Transactions',
               subtitle: 'View your digital pass purchase history',
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Transactions: PhonePe AutoPay Active')),
-                );
-              },
+              onTap: () => drama.openAutoPayDialog(),
             ),
 
             _ProfileMenuTile(
@@ -282,6 +289,46 @@ class ProfileScreen extends StatelessWidget {
               subtitle: 'Log out of this device',
               accentColor: Colors.redAccent,
               onTap: () => _confirmSignOut(context, auth),
+            ),
+
+            const SizedBox(height: 16),
+
+            // App Version Badge
+            Center(
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.verified, size: 14, color: AppTheme.storyTvPink),
+                        SizedBox(width: 6),
+                        Text(
+                          'StoryUp v1.1.0 (Build 2) • Updated',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Luxury Vertical Drama Streaming',
+                    style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
             ),
           ],
         ),

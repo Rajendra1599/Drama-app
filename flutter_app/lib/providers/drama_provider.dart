@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/user_role.dart';
 import '../models/drama_series.dart';
@@ -12,6 +13,7 @@ import '../models/content_report.dart';
 import '../services/api_service.dart';
 import '../services/payment_service.dart';
 import '../services/local_storage_service.dart';
+import '../services/web_video_interop.dart';
 
 class DramaProvider extends ChangeNotifier {
   // Navigation
@@ -31,6 +33,7 @@ class DramaProvider extends ChangeNotifier {
 
   // Catalog & Feeds
   List<DramaSeries> _allSeries = [];
+  List<DramaSeries> _shuffledSeries = [];
   DramaSeries? _featuredSeries;
   List<DramaSeries> _trendingDramas = [];
   List<DramaSeries> _popularDramas = [];
@@ -38,6 +41,7 @@ class DramaProvider extends ChangeNotifier {
   final Map<String, List<Episode>> _seriesEpisodes = {};
 
   List<DramaSeries> get allSeries => _allSeries;
+  List<DramaSeries> get shuffledSeries => _shuffledSeries.isNotEmpty ? _shuffledSeries : _allSeries;
   DramaSeries? get featuredSeries => _featuredSeries;
   List<DramaSeries> get trendingDramas => _trendingDramas;
   List<DramaSeries> get popularDramas => _popularDramas;
@@ -110,10 +114,29 @@ class DramaProvider extends ChangeNotifier {
     return _userSubscription!.isVipActive;
   }
 
-  /// Whether an episode is blocked by payment paywall
-  bool isEpisodePaywallLocked(int episodeNumber) {
+  final Set<String> _adUnlockedEpisodeKeys = {};
+
+  /// Whether an episode is blocked by paywall.
+  /// First 5 episodes are 100% complimentary free.
+  /// Episode 6+ are locked unless user has active VIP pass or unlocked with an ad.
+  bool isEpisodePaywallLocked(int episodeNumber, {String? seriesId}) {
+    if (episodeNumber <= 5) return false;
     if (isVipActive) return false;
-    return episodeNumber > 5;
+    final sid = seriesId ?? _selectedSeriesId ?? '';
+    final key = '${sid}_$episodeNumber';
+    if (_adUnlockedEpisodeKeys.contains(key)) return false;
+    return true;
+  }
+
+  bool isEpisodeUnlockedWithAd(String seriesId, int episodeNumber) {
+    return _adUnlockedEpisodeKeys.contains('${seriesId}_$episodeNumber');
+  }
+
+  Future<void> unlockEpisodeWithAd(String seriesId, int episodeNumber) async {
+    final key = '${seriesId}_$episodeNumber';
+    _adUnlockedEpisodeKeys.add(key);
+    await LocalStorageService.saveUnlockedEpisodes(_adUnlockedEpisodeKeys.toList());
+    notifyListeners();
   }
 
   // Dialog & Sheet states
@@ -165,31 +188,54 @@ class DramaProvider extends ChangeNotifier {
     _loadLocalUserData();
   }
 
-  Future<void> _initCatalog() async {
-    _allSeries = await ApiService.fetchCatalog();
+  void _setupSeriesLists(List<DramaSeries> series) {
+    _allSeries = series;
     if (_allSeries.isNotEmpty) {
+      _shuffledSeries = List.from(_allSeries)..shuffle();
       _featuredSeries = _allSeries.firstWhere((s) => s.isFeatured,
-          orElse: () => _allSeries.first);
+          orElse: () => _shuffledSeries.first);
       _trendingDramas = List.from(_allSeries)
         ..sort((a, b) => b.totalViews.compareTo(a.totalViews));
-      _popularDramas = List.from(_allSeries)
-        ..sort((a, b) => b.totalViews.compareTo(a.totalViews));
+      _popularDramas = List.from(_shuffledSeries)..shuffle();
       _newReleases = List.from(_allSeries)
         ..sort((a, b) => b.releaseDateEpoch.compareTo(a.releaseDateEpoch));
-      _selectedSeriesId = _featuredSeries?.id ?? _allSeries.first.id;
-
-      // Fetch real uploaded episodes for all published series
-      for (final s in _allSeries) {
-        loadEpisodesForSeries(s.id);
-      }
+      _selectedSeriesId = _featuredSeries?.id ?? _shuffledSeries.first.id;
     } else {
       _selectedSeriesId = null;
       _featuredSeries = null;
+      _shuffledSeries = [];
       _trendingDramas = [];
       _popularDramas = [];
       _newReleases = [];
     }
-    notifyListeners();
+  }
+
+  Future<void> _initCatalog() async {
+    // 1. Instant local cached catalog for 0ms initial load
+    final cached = LocalStorageService.cachedCatalog;
+    if (cached.isNotEmpty) {
+      try {
+        final data = jsonDecode(cached);
+        final list = (data['series'] as List?) ?? [];
+        if (list.isNotEmpty) {
+          final cachedSeries = list.map((item) => DramaSeries.fromJson(item)).toList();
+          _setupSeriesLists(cachedSeries);
+          notifyListeners();
+        }
+      } catch (_) {}
+    }
+
+    // 2. Fetch fresh catalog from API (fast local/live)
+    final freshSeries = await ApiService.fetchCatalog();
+    if (freshSeries.isNotEmpty) {
+      _setupSeriesLists(freshSeries);
+      notifyListeners();
+
+      // Load episodes for initial active series without blocking whole app
+      if (_selectedSeriesId != null) {
+        loadEpisodesForSeries(_selectedSeriesId!);
+      }
+    }
   }
 
   Future<void> loadEpisodesForSeries(String seriesId) async {
@@ -217,6 +263,7 @@ class DramaProvider extends ChangeNotifier {
   void _loadLocalUserData() {
     _watchlistIds = LocalStorageService.getWatchlist();
     _watchHistory = LocalStorageService.getWatchHistory();
+    _adUnlockedEpisodeKeys.addAll(LocalStorageService.getUnlockedEpisodes());
 
     _pendingReports = [];
     syncSubscription();
@@ -230,6 +277,9 @@ class DramaProvider extends ChangeNotifier {
 
   void navigateTo(AppScreen screen) {
     if (_currentScreen == screen) return;
+    if (_currentScreen == AppScreen.player && screen != AppScreen.player) {
+      WebVideoInterop.pauseAllWebVideos();
+    }
     _currentScreen = screen;
     _screenStack.add(screen);
     notifyListeners();
@@ -237,6 +287,9 @@ class DramaProvider extends ChangeNotifier {
 
   bool navigateBack() {
     if (_screenStack.length > 1) {
+      if (_currentScreen == AppScreen.player) {
+        WebVideoInterop.pauseAllWebVideos();
+      }
       _screenStack.removeLast();
       _currentScreen = _screenStack.last;
       notifyListeners();
@@ -259,6 +312,15 @@ class DramaProvider extends ChangeNotifier {
     }
     loadEpisodesForSeries(seriesId);
     navigateTo(AppScreen.player);
+  }
+
+  void switchEpisode(int episodeNumber) {
+    if (_activeEpisodeNumber == episodeNumber) return;
+    _activeEpisodeNumber = episodeNumber;
+    if (_selectedSeriesId != null) {
+      _selectedEpisodeId = 'ep_${_selectedSeriesId}_$episodeNumber';
+    }
+    notifyListeners();
   }
 
   // ===========================================================================
@@ -366,40 +428,7 @@ class DramaProvider extends ChangeNotifier {
   }
 
   Future<void> initiatePhonePePayment({UpiAppTarget? target}) async {
-    closeAutoPayDialog();
-    _paymentErrorMessage = null;
-    _isPaymentVerifying = false;
-
-    final result = await PaymentService.launchUpiAutoPay(
-      userId: 'user_demo_101',
-      plan: _selectedAutoPayPlan,
-      target: target ?? _selectedUpiTarget,
-    );
-
-    // If modal already verified and completed payment automatically
-    if (result['verified'] == true && result['subscription'] != null) {
-      final sub = result['subscription'] as UserSubscription;
-      _userSubscription = sub;
-      _transactions.insert(
-        0,
-        PaymentTransaction(
-          id: result['transactionId']?.toString() ?? 'MD_RZP_${DateTime.now().millisecondsSinceEpoch}',
-          userId: 'user_demo_101',
-          planName: _selectedAutoPayPlan.name,
-          amount: _selectedAutoPayPlan.initialPriceInr,
-          createdAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-      );
-      _isPaymentVerificationDialogVisible = false;
-      _isPaymentVerifying = false;
-      _activePaymentTransactionId = null;
-      notifyListeners();
-      return;
-    }
-
-    _activePaymentTransactionId = result['transactionId']?.toString();
-    _isPaymentVerificationDialogVisible = true;
-    notifyListeners();
+    openAutoPayDialog();
   }
 
 

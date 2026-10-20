@@ -29,7 +29,7 @@ class ApiService {
   }) async {
     try {
       final uri = Uri.parse('${ApiConfig.dramas}?page=$page&limit=$limit&genre=$genre&sort=$sort');
-      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 5));
+      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         await LocalStorageService.setCachedCatalog(res.body);
         final data = jsonDecode(res.body);
@@ -37,7 +37,23 @@ class ApiService {
         return list.map((item) => DramaSeries.fromJson(item)).toList();
       }
     } catch (e) {
-      debugPrint('[ApiService] fetchCatalog network error: $e');
+      debugPrint('[ApiService] fetchCatalog primary error: $e');
+    }
+
+    // Fallback to live server if local was unreachable
+    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
+      try {
+        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas?page=$page&limit=$limit&genre=$genre&sort=$sort');
+        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          await LocalStorageService.setCachedCatalog(res.body);
+          final data = jsonDecode(res.body);
+          final list = (data['series'] as List?) ?? [];
+          return list.map((item) => DramaSeries.fromJson(item)).toList();
+        }
+      } catch (e) {
+        debugPrint('[ApiService] fetchCatalog fallback error: $e');
+      }
     }
 
     // Instant offline/cached fallback
@@ -63,7 +79,9 @@ class ApiService {
         final list = (data['trending'] as List?) ?? [];
         return list.map((item) => DramaSeries.fromJson(item)).toList();
       }
-    } catch (e) {}
+    } catch (_) {
+      // Fallback to empty trending on network error
+    }
     return [];
   }
 
@@ -77,14 +95,16 @@ class ApiService {
         final list = (data['results'] as List?) ?? [];
         return list.map((item) => DramaSeries.fromJson(item)).toList();
       }
-    } catch (e) {}
+    } catch (_) {
+      // Fallback to empty results on network error
+    }
     return [];
   }
 
   static Future<List<Episode>> fetchEpisodesForSeries(String seriesId) async {
     try {
       final uri = Uri.parse(ApiConfig.dramaEpisodes(seriesId));
-      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 12));
+      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final list = (data['episodes'] as List?) ?? [];
@@ -93,7 +113,21 @@ class ApiService {
         }
       }
     } catch (e) {
-      debugPrint('[ApiService] fetchEpisodesForSeries error: $e');
+      debugPrint('[ApiService] fetchEpisodesForSeries primary error: $e');
+    }
+
+    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
+      try {
+        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas/$seriesId/episodes');
+        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          final list = (data['episodes'] as List?) ?? [];
+          if (list.isNotEmpty) {
+            return list.map((item) => Episode.fromJson(item)).toList();
+          }
+        }
+      } catch (_) {}
     }
     return getEpisodesForSeries(seriesId, 10);
   }
@@ -121,7 +155,9 @@ class ApiService {
       if (res.statusCode == 200 || res.statusCode == 403) {
         return jsonDecode(res.body);
       }
-    } catch (e) {}
+    } catch (_) {
+      // Fallback to default auth policy on timeout/error
+    }
 
     // Fallback logic: episodes 1-5 free, episode 6+ locked
     final isFree = episodeNumber <= 5;
@@ -151,7 +187,9 @@ class ApiService {
           'userId': userId,
         }),
       ).timeout(const Duration(seconds: 3));
-    } catch (e) {}
+    } catch (_) {
+      // Ignore background view logging failure
+    }
   }
 
   // ===========================================================================
@@ -286,7 +324,9 @@ class ApiService {
       if (res.statusCode == 200) {
         return UserSubscription.fromJson(jsonDecode(res.body));
       }
-    } catch (e) {}
+    } catch (_) {
+      // Offline fallback: subscription not loaded
+    }
     return null;
   }
 
@@ -303,7 +343,9 @@ class ApiService {
           return UserSubscription.fromJson(data['subscription']);
         }
       }
-    } catch (e) {}
+    } catch (_) {
+      // Offline fallback for trial
+    }
 
     // Offline fallback: 24h trial
     return UserSubscription(

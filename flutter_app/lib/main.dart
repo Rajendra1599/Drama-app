@@ -8,6 +8,8 @@ import 'models/user_role.dart';
 import 'providers/auth_provider.dart';
 import 'providers/drama_provider.dart';
 import 'services/local_storage_service.dart';
+import 'services/web_video_interop.dart';
+import 'services/rewarded_ad_manager.dart';
 
 import 'widgets/story_top_bar.dart';
 import 'widgets/story_bottom_nav.dart';
@@ -37,7 +39,17 @@ void main() async {
     ),
   );
 
-  await LocalStorageService.init();
+  try {
+    await LocalStorageService.init();
+  } catch (e) {
+    debugPrint('⚠️ [Init] LocalStorageService init error: $e');
+  }
+
+  try {
+    await RewardedAdManager.instance.initialize();
+  } catch (e) {
+    debugPrint('⚠️ [Init] RewardedAdManager init error: $e');
+  }
 
   runApp(
     MultiProvider(
@@ -123,6 +135,7 @@ class MainNavigationWrapper extends StatelessWidget {
         } else if (drama.isPoliciesDialogVisible) {
           drama.closePoliciesDialog();
         } else {
+          WebVideoInterop.pauseAllWebVideos();
           final handled = drama.navigateBack();
           if (!handled) {
             SystemNavigator.pop();
@@ -139,7 +152,7 @@ class MainNavigationWrapper extends StatelessWidget {
                 if (showTopBar)
                   StoryTopBar(
                     onSearchClick: () => drama.navigateTo(AppScreen.search),
-                    onRenewPlanClick: () => drama.navigateTo(AppScreen.popular),
+                    onRenewPlanClick: () => drama.openAutoPayDialog(),
                   ),
                 Expanded(
                   child: Stack(

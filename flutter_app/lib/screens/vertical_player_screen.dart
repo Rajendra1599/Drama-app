@@ -3,10 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/user_role.dart';
+import '../models/episode.dart';
 import '../providers/drama_provider.dart';
 import '../widgets/episodes_sheet.dart';
 import '../services/web_video_interop.dart';
+import '../services/rewarded_ad_manager.dart';
+import '../models/drama_series.dart';
 import '../config/theme.dart';
 
 class VerticalPlayerScreen extends StatefulWidget {
@@ -20,11 +24,22 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   PageController? _pageController;
   VideoPlayerController? _videoController;
   bool _isInitialized = false;
+  bool _isConnecting = false;
+  bool _isDisposed = false;
+  String? _targetLoadingUrl;
   bool _isMuted = false;
   final bool _controlsVisible = true;
   String? _loadedVideoUrl;
   String? _loadedEpisodeId;
   int _currentEpisodeNum = 1;
+
+  // Race-condition prevention & memory management
+  int _initSequenceId = 0;
+  final Set<VideoPlayerController> _allocatedControllers = {};
+
+  // Background Pre-Buffering for Instant TikTok/Reels Style Swipe
+  VideoPlayerController? _prebufferedNextController;
+  String? _prebufferedNextUrl;
 
   bool _showAnimatedIcon = false;
   bool _lastActionWasPlay = true;
@@ -35,6 +50,10 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   bool _showRewindAnimation = false;
   bool _showForwardAnimation = false;
   Timer? _seekAnimationTimer;
+
+  // Lifecycle & Rewarded Ad State
+  bool _isUnlockingWithAd = false;
+  String? _adErrorMessage;
 
   @override
   void initState() {
@@ -69,6 +88,11 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   void didChangeDependencies() {
     super.didChangeDependencies();
     final drama = Provider.of<DramaProvider>(context, listen: false);
+    if (drama.currentScreen != AppScreen.player) {
+      _cleanupAndStopVideo();
+      return;
+    }
+
     if (_currentEpisodeNum != drama.activeEpisodeNumber) {
       _currentEpisodeNum = drama.activeEpisodeNumber;
       if (_pageController != null && _pageController!.hasClients) {
@@ -88,38 +112,385 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     });
   }
 
-  void _checkAndInitVideo([DramaProvider? dramaProvider]) {
-    if (!mounted) return;
-    final drama = dramaProvider ?? Provider.of<DramaProvider>(context, listen: false);
-    final ep = drama.currentEpisode;
-    if (ep == null) {
-      debugPrint('🎬 [PLAYER] currentEpisode is null');
-      return;
+  void _cleanupAndStopVideo({bool notify = true}) {
+    _initSequenceId++; // Invalidate any running async inits
+    _isConnecting = false;
+    _targetLoadingUrl = null;
+    _loadedEpisodeId = null;
+    _loadedVideoUrl = null;
+    final c = _videoController;
+    _videoController = null;
+    _isInitialized = false;
+
+    // Never call setState during dispose or unmount lifecycle!
+    if (notify && mounted && !_isDisposed) {
+      setState(() {});
+    }
+    if (c != null) {
+      try {
+        if (c.value.isInitialized) {
+          final pos = c.value.position.inSeconds;
+          final dur = c.value.duration.inSeconds;
+          if (dur > 0) {
+            final drama = Provider.of<DramaProvider>(context, listen: false);
+            final sId = drama.selectedSeriesId;
+            final ep = drama.currentEpisode;
+            if (sId != null && ep != null) {
+              drama.recordWatchProgress(
+                seriesId: sId,
+                episodeId: ep.id,
+                progressSeconds: pos,
+                totalSeconds: dur,
+              );
+            }
+          }
+        }
+      } catch (_) {}
     }
 
-    // Hard paywall is only active if payment is required (not bypassed) and user is not VIP
-    final isPaywallBlocked = drama.isEpisodePaywallLocked(ep.episodeNumber);
-    if (isPaywallBlocked) {
-      debugPrint('🎬 [PLAYER] Episode ${ep.episodeNumber} is paywall locked');
-      _videoController?.pause();
-      return;
+    // Clean up pre-buffered controller
+    final oldPre = _prebufferedNextController;
+    _prebufferedNextController = null;
+    _prebufferedNextUrl = null;
+    if (oldPre != null) {
+      try {
+        oldPre.pause();
+        oldPre.dispose();
+      } catch (_) {}
     }
 
-    if (_loadedEpisodeId != ep.id || _loadedVideoUrl != ep.videoUrl || _videoController == null) {
-      _loadedEpisodeId = ep.id;
-      _loadedVideoUrl = ep.videoUrl;
-      debugPrint('🎬 [PLAYER] Initializing ep #${ep.episodeNumber} (${ep.id}) - URL: ${ep.videoUrl}');
-      _initializePlayer(ep.videoUrl);
+    // Force terminate & dispose ALL allocated controllers
+    for (final ctrl in _allocatedControllers) {
+      try {
+        ctrl.pause();
+        ctrl.setVolume(0.0);
+        ctrl.dispose();
+      } catch (e) {
+        debugPrint('🎬 [PLAYER] Error disposing controller in pool: $e');
+      }
+    }
+    _allocatedControllers.clear();
+
+    if (kIsWeb) {
+      WebVideoInterop.pauseAllWebVideos();
     }
   }
 
-  Future<void> _initializePlayer(String url) async {
-    final trimmedUrl = url.trim();
+  @override
+  void dispose() {
+    _isDisposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _iconAnimationTimer?.cancel();
+    _heartTimer?.cancel();
+    _seekAnimationTimer?.cancel();
+    _cleanupAndStopVideo(notify: false);
+    _pageController?.dispose();
+    super.dispose();
+  }
+
+  void _unlockEpisodeWithRewardedAd(DramaProvider drama, DramaSeries series, Episode ep) {
+    if (_isUnlockingWithAd) return;
+    setState(() {
+      _isUnlockingWithAd = true;
+      _adErrorMessage = null;
+    });
+
+    RewardedAdManager.instance.showRewardedAd(
+      context: context,
+      onUserEarnedReward: () async {
+        debugPrint('🎉 [VerticalPlayer] Rewarded ad completed! Unlocking Episode ${ep.episodeNumber}');
+        await drama.unlockEpisodeWithAd(series.id, ep.episodeNumber);
+        if (mounted) {
+          setState(() {
+            _isUnlockingWithAd = false;
+            _adErrorMessage = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
+                  const SizedBox(width: 8),
+                  Text('Episode ${ep.episodeNumber} Unlocked! Enjoy streaming.'),
+                ],
+              ),
+              backgroundColor: const Color(0xFF1E1E28),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          // Auto-play the unlocked episode
+          _checkAndInitVideo(drama, ep);
+        }
+      },
+      onAdDismissed: () {
+        if (mounted) {
+          setState(() => _isUnlockingWithAd = false);
+        }
+      },
+      onAdFailed: (error) {
+        if (mounted) {
+          setState(() {
+            _isUnlockingWithAd = false;
+            _adErrorMessage = error;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.amberAccent),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(error)),
+                ],
+              ),
+              backgroundColor: const Color(0xFF261214),
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: 'RETRY',
+                textColor: AppTheme.storyTvPink,
+                onPressed: () => _unlockEpisodeWithRewardedAd(drama, series, ep),
+              ),
+            ),
+          );
+        }
+      },
+    );
+  }
+
+  void _pauseForLockedEpisode(Episode lockedEp) {
+    _initSequenceId++; // Invalidate any running async inits
+    _isConnecting = false;
+    _targetLoadingUrl = null;
+    _loadedEpisodeId = lockedEp.id; // Mark episode handled so build() does not re-trigger in a loop
+    _loadedVideoUrl = null;
+    final c = _videoController;
+    _videoController = null;
+    _isInitialized = false;
+
+    if (c != null) {
+      try {
+        c.pause();
+        c.setVolume(0.0);
+        c.dispose();
+      } catch (_) {}
+      _allocatedControllers.remove(c);
+    }
+
+    for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
+      try {
+        ctrl.pause();
+        ctrl.setVolume(0.0);
+        ctrl.dispose();
+      } catch (_) {}
+    }
+    _allocatedControllers.clear();
+
+    if (mounted && !_isDisposed) {
+      setState(() {});
+    }
+  }
+
+  void _checkAndInitVideo([DramaProvider? dramaProvider, Episode? targetEpisode]) {
+    if (!mounted || _isDisposed) return;
+    final drama = dramaProvider ?? Provider.of<DramaProvider>(context, listen: false);
+    final series = drama.selectedSeries;
+    final ep = targetEpisode ?? drama.currentEpisode;
+    if (ep == null || series == null) {
+      debugPrint('🎬 [PLAYER] currentEpisode or series is null');
+      return;
+    }
+
+    // Check if this episode is locked by paywall
+    final isLocked = drama.isEpisodePaywallLocked(ep.episodeNumber, seriesId: series.id);
+    if (isLocked) {
+      debugPrint('🎬 [PLAYER] Episode ${ep.episodeNumber} is locked behind Paywall');
+      _pauseForLockedEpisode(ep);
+      return;
+    }
+
+    // Prevent duplicate initializations if already loaded or actively connecting
+    if (_loadedEpisodeId == ep.id && _loadedVideoUrl == ep.videoUrl && (_videoController != null || _isConnecting)) {
+      return;
+    }
+
+    _loadedEpisodeId = ep.id;
+    _loadedVideoUrl = ep.videoUrl;
+    debugPrint('🎬 [PLAYER] Initializing ep #${ep.episodeNumber} (${ep.id}) - URL: ${ep.videoUrl}');
+    _initializePlayer(ep.videoUrl);
+  }
+
+  static String _optimizeVideoUrl(String rawUrl) {
+    var url = rawUrl.trim();
+    if (url.isEmpty) return url;
+
+    // 1. AWS CloudFront Fast Edge CDN Streaming (Zero latency, direct playback)
+    if (url.contains('cloudfront.net') || url.contains('.amazonaws.com')) {
+      if (url.startsWith('http://')) {
+        url = url.replaceFirst('http://', 'https://');
+      }
+      return url;
+    }
+
+    // 2. Cloudinary fast streaming & instant compression
+    if (url.contains('res.cloudinary.com')) {
+      if (url.contains('/upload/') && !url.contains('/video/upload/')) {
+        url = url.replaceFirst('/upload/', '/video/upload/');
+      }
+      if (!url.contains('q_auto')) {
+        url = url.replaceFirst('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
+      }
+      return url;
+    }
+
+    // 3. ImageKit.io Fast Edge CDN Transcoding & Auto-Streaming
+    if (url.contains('ik.imagekit.io')) {
+      if (!url.contains('/tr:')) {
+        url = url.replaceFirstMapped(
+          RegExp(r'(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)'),
+          (match) => '${match.group(1)}/tr:q-60,w-720,f-auto/${match.group(2)}',
+        );
+      }
+      return url;
+    }
+
+    return url;
+  }
+
+  void _preloadNextController(String rawUrl) async {
+    final nextUrl = _optimizeVideoUrl(rawUrl);
+    if (nextUrl.isEmpty || (_prebufferedNextUrl == nextUrl && _prebufferedNextController != null)) {
+      return;
+    }
+
+    final oldPre = _prebufferedNextController;
+    _prebufferedNextController = null;
+    _prebufferedNextUrl = null;
+    if (oldPre != null) {
+      try {
+        oldPre.dispose();
+        _allocatedControllers.remove(oldPre);
+      } catch (_) {}
+    }
+
+    try {
+      debugPrint('🎬 [PLAYER] ⚡ Pre-buffering next episode in background: $nextUrl');
+      final safePreUri = Uri.tryParse(nextUrl) ?? Uri.parse(Uri.encodeFull(nextUrl));
+      final preCtrl = VideoPlayerController.networkUrl(
+        safePreUri,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
+      );
+      _allocatedControllers.add(preCtrl);
+      await preCtrl.initialize();
+      await preCtrl.setLooping(false);
+      await preCtrl.setVolume(0.0);
+
+      if (mounted && !_isDisposed) {
+        _prebufferedNextController = preCtrl;
+        _prebufferedNextUrl = nextUrl;
+        debugPrint('🎬 [PLAYER] ⚡ Next episode successfully pre-buffered and ready for INSTANT playback!');
+      } else {
+        preCtrl.dispose();
+        _allocatedControllers.remove(preCtrl);
+      }
+    } catch (e) {
+      debugPrint('🎬 [PLAYER] Pre-buffering next episode warning: $e');
+    }
+  }
+
+  Future<void> _initializePlayer(String rawUrl) async {
+    final trimmedUrl = _optimizeVideoUrl(rawUrl);
     if (trimmedUrl.isEmpty) {
       debugPrint('🎬 [PLAYER] URL is empty!');
       return;
     }
 
+    // FAST-PATH: If this video was pre-buffered in the background, use it INSTANTLY (0s delay)!
+    if (_prebufferedNextController != null &&
+        _prebufferedNextUrl == trimmedUrl &&
+        _prebufferedNextController!.value.isInitialized) {
+      debugPrint('🎬 [PLAYER] 🚀 INSTANT PLAYBACK TRIGGERED from pre-buffer cache for $trimmedUrl');
+      final readyCtrl = _prebufferedNextController!;
+      _prebufferedNextController = null;
+      _prebufferedNextUrl = null;
+
+      final oldController = _videoController;
+      _videoController = readyCtrl;
+      if (oldController != null) {
+        try {
+          oldController.pause();
+          oldController.dispose();
+          _allocatedControllers.remove(oldController);
+        } catch (_) {}
+      }
+
+      await _videoController!.setVolume(_isMuted ? 0.0 : 1.0);
+      _isConnecting = false;
+      _targetLoadingUrl = null;
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+
+      try {
+        await _videoController!.play();
+      } catch (_) {}
+
+      // Preload next episode in background
+      try {
+        final drama = Provider.of<DramaProvider>(context, listen: false);
+        final series = drama.selectedSeries;
+        if (series != null) {
+          final allEps = drama.getEpisodesForSeries(series.id);
+          final nextIndex = _currentEpisodeNum; // 0-indexed next
+          if (nextIndex < allEps.length) {
+            if (kIsWeb) {
+              WebVideoInterop.preloadVideo(_optimizeVideoUrl(allEps[nextIndex].videoUrl));
+            } else {
+              _preloadNextController(allEps[nextIndex].videoUrl);
+            }
+          }
+        }
+      } catch (_) {}
+
+      int lastRecordedSec = -1;
+      final currentSeq = ++_initSequenceId;
+      readyCtrl.addListener(() {
+        if (!mounted || _videoController != readyCtrl || currentSeq != _initSequenceId) return;
+        final pos = readyCtrl.value.position.inSeconds;
+        final dur = readyCtrl.value.duration.inSeconds;
+        if (dur > 0 && (pos - lastRecordedSec).abs() >= 2) {
+          lastRecordedSec = pos;
+          final drama = Provider.of<DramaProvider>(context, listen: false);
+          final sId = drama.selectedSeriesId;
+          final ep = drama.currentEpisode;
+          if (sId != null && ep != null) {
+            drama.recordWatchProgress(
+              seriesId: sId,
+              episodeId: ep.id,
+              progressSeconds: pos,
+              totalSeconds: dur,
+            );
+          }
+        }
+        if (dur > 0 && readyCtrl.value.position >= readyCtrl.value.duration) {
+          _onVideoCompleted();
+        }
+      });
+
+      return;
+    }
+
+    if (_isConnecting && _targetLoadingUrl == trimmedUrl) {
+      debugPrint('🎬 [PLAYER] Already connecting to $trimmedUrl - skipping duplicate call');
+      return;
+    }
+
+    _isConnecting = true;
+    _targetLoadingUrl = trimmedUrl;
+    final currentSeq = ++_initSequenceId;
+
+    // Dispose old controller
     final oldController = _videoController;
     _videoController = null;
     if (mounted) {
@@ -132,52 +503,111 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         await oldController.pause();
         await oldController.setVolume(0.0);
         await oldController.dispose();
+        _allocatedControllers.remove(oldController);
       } catch (e) {
         debugPrint('🎬 [PLAYER] Error disposing old controller: $e');
       }
     }
 
+    // Ensure all other previous controllers are paused & purged
+    for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
+      try {
+        ctrl.pause();
+        ctrl.setVolume(0.0);
+        ctrl.dispose();
+      } catch (_) {}
+    }
+    _allocatedControllers.clear();
+
     try {
-      debugPrint('🎬 [PLAYER] Connecting to video: $trimmedUrl');
+      debugPrint('🎬 [PLAYER] (Seq #$currentSeq) Connecting to fast stream: $trimmedUrl');
+      final safeUri = Uri.tryParse(trimmedUrl) ?? Uri.parse(Uri.encodeFull(trimmedUrl));
       final controller = VideoPlayerController.networkUrl(
-        Uri.parse(trimmedUrl),
+        safeUri,
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
       );
+      _allocatedControllers.add(controller);
 
-      _videoController = controller;
       await controller.initialize();
 
-      if (!mounted) {
+      // Check if stale or user navigated away during async buffer
+      if (!mounted || currentSeq != _initSequenceId) {
+        debugPrint('🎬 [PLAYER] Aborting stale init #$currentSeq (latest is #$_initSequenceId)');
         try {
           await controller.pause();
           await controller.setVolume(0.0);
           await controller.dispose();
+          _allocatedControllers.remove(controller);
         } catch (_) {}
+        // Do NOT call pauseAllWebVideos here, as it would destroy the next episode that started!
+        _isConnecting = false;
+        _targetLoadingUrl = null;
         return;
       }
 
       final drama = Provider.of<DramaProvider>(context, listen: false);
       if (drama.currentScreen != AppScreen.player) {
+        debugPrint('🎬 [PLAYER] Screen is not player, disposing controller');
         try {
           await controller.pause();
           await controller.setVolume(0.0);
+          await controller.dispose();
+          _allocatedControllers.remove(controller);
         } catch (_) {}
+        if (kIsWeb) WebVideoInterop.pauseAllWebVideos();
+        _isConnecting = false;
+        _targetLoadingUrl = null;
         return;
       }
 
-      await controller.setLooping(true);
+      _videoController = controller;
+      await controller.setLooping(false); // Do not loop: auto-advance or show ad
       await controller.setVolume(_isMuted ? 0.0 : 1.0);
 
-      setState(() {
-        _isInitialized = true;
-      });
+      _isConnecting = false;
+      _targetLoadingUrl = null;
 
-      await controller.play();
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+
+      try {
+        await controller.play();
+      } catch (err) {
+        debugPrint('🎬 [PLAYER] Web Autoplay policy fallback: $err');
+        try {
+          await controller.setVolume(0.0);
+          await controller.play();
+        } catch (_) {}
+      }
+
       debugPrint('🎬 [PLAYER] Playing! Size: ${controller.value.size}, Duration: ${controller.value.duration}');
+
+      if (kIsWeb) {
+        WebVideoInterop.optimizeWebVideos();
+      }
+
+      // Preload next episode in background for instant swipe
+      try {
+        final series = drama.selectedSeries;
+        if (series != null) {
+          final allEps = drama.getEpisodesForSeries(series.id);
+          final nextIndex = _currentEpisodeNum; // Next episode is at index _currentEpisodeNum
+          if (nextIndex < allEps.length) {
+            if (kIsWeb) {
+              WebVideoInterop.preloadVideo(_optimizeVideoUrl(allEps[nextIndex].videoUrl));
+            } else {
+              _preloadNextController(allEps[nextIndex].videoUrl);
+            }
+          }
+        }
+      } catch (_) {}
 
       int lastRecordedSec = -1;
       controller.addListener(() {
-        if (!mounted || _videoController != controller) return;
+        if (!mounted || _videoController != controller || currentSeq != _initSequenceId) return;
         final pos = controller.value.position.inSeconds;
         final dur = controller.value.duration.inSeconds;
         if (dur > 0 && (pos - lastRecordedSec).abs() >= 2) {
@@ -194,13 +624,38 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
             );
           }
         }
+
+        // When video reaches end, auto-advance to next episode
+        if (dur > 0 && controller.value.position >= controller.value.duration) {
+          _onVideoCompleted();
+        }
       });
     } catch (e) {
       debugPrint('🎬 [PLAYER] Video init error: $e');
+      _isConnecting = false;
+      _targetLoadingUrl = null;
       const fallbackUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-      if (trimmedUrl != fallbackUrl && mounted) {
+      if (trimmedUrl != fallbackUrl && mounted && currentSeq == _initSequenceId) {
         debugPrint('🎬 [PLAYER] Retrying with reliable fallback video stream...');
         _initializePlayer(fallbackUrl);
+      }
+    }
+  }
+
+  void _onVideoCompleted() {
+    if (!mounted) return;
+    final drama = Provider.of<DramaProvider>(context, listen: false);
+    final series = drama.selectedSeries;
+    if (series == null) return;
+    final nextEpNum = _currentEpisodeNum + 1;
+    final episodes = drama.getEpisodesForSeries(series.id);
+    if (nextEpNum <= episodes.length) {
+      if (_pageController != null && _pageController!.hasClients) {
+        _pageController!.animateToPage(
+          nextEpNum - 1,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeInOut,
+        );
       }
     }
   }
@@ -280,39 +735,6 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     });
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _iconAnimationTimer?.cancel();
-    _heartTimer?.cancel();
-    _seekAnimationTimer?.cancel();
-    try {
-      if (_videoController != null && _videoController!.value.isInitialized) {
-        final pos = _videoController!.value.position.inSeconds;
-        final dur = _videoController!.value.duration.inSeconds;
-        if (dur > 0) {
-          final drama = Provider.of<DramaProvider>(context, listen: false);
-          final sId = drama.selectedSeriesId;
-          final ep = drama.currentEpisode;
-          if (sId != null && ep != null) {
-            drama.recordWatchProgress(
-              seriesId: sId,
-              episodeId: ep.id,
-              progressSeconds: pos,
-              totalSeconds: dur,
-            );
-          }
-        }
-      }
-    } catch (_) {}
-    try {
-      _videoController?.pause();
-      _videoController?.setVolume(0.0);
-      _videoController?.dispose();
-    } catch (_) {}
-    _pageController?.dispose();
-    super.dispose();
-  }
 
   void _showCommentsSheet(BuildContext context, DramaProvider drama, String episodeId) {
     final textController = TextEditingController();
@@ -455,6 +877,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         episodes: drama.currentEpisodes,
         activeEpisodeNumber: drama.activeEpisodeNumber,
         isVip: drama.isVipActive,
+        isEpisodeLocked: (epNumber) => drama.isEpisodePaywallLocked(epNumber, seriesId: drama.selectedSeriesId),
         onSelectEpisode: (epNum) {
           Navigator.pop(ctx);
           drama.startOrResumeSeries(drama.selectedSeriesId!, episodeNumber: epNum);
@@ -473,11 +896,13 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     final series = drama.selectedSeries;
     final episodes = drama.currentEpisodes;
     final ep = drama.currentEpisode;
+    final isLocked = series != null && ep != null ? drama.isEpisodePaywallLocked(ep.episodeNumber) : false;
+    final isUnlocked = !isLocked;
 
-    if (ep != null && (_loadedEpisodeId != ep.id || _loadedVideoUrl != ep.videoUrl || _videoController == null)) {
+    if (ep != null && isUnlocked && (_loadedEpisodeId != ep.id || _loadedVideoUrl != ep.videoUrl || (_videoController == null && !_isConnecting))) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _checkAndInitVideo(drama);
+        if (mounted && !_isDisposed) {
+          _checkAndInitVideo(drama, ep);
         }
       });
     }
@@ -579,8 +1004,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        _videoController?.pause();
-        _videoController?.setVolume(0.0);
+        _cleanupAndStopVideo();
         drama.navigateBack();
       },
       child: Scaffold(
@@ -593,18 +1017,36 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
           onPageChanged: (index) {
             final targetEp = episodes[index];
             _currentEpisodeNum = targetEp.episodeNumber;
-            drama.startOrResumeSeries(series.id, episodeNumber: targetEp.episodeNumber);
+            drama.switchEpisode(targetEp.episodeNumber);
+            final isLocked = drama.isEpisodePaywallLocked(targetEp.episodeNumber, seriesId: series.id);
+            if (isLocked) {
+              _pauseForLockedEpisode(targetEp);
+            } else {
+              _checkAndInitVideo(drama, targetEp);
+            }
           },
           itemBuilder: (context, index) {
             final ep = episodes[index];
-            final isCurrent = ep.episodeNumber == drama.activeEpisodeNumber;
-            final isLocked = drama.isEpisodePaywallLocked(ep.episodeNumber);
+            final isCurrent = ep.episodeNumber == _currentEpisodeNum;
+            final isLocked = drama.isEpisodePaywallLocked(ep.episodeNumber, seriesId: series.id);
+            final isUnlocked = !isLocked;
 
             return Stack(
               fit: StackFit.expand,
               children: [
-                // 1. Video Player Surface (Full-Screen Edge-to-Edge with Zero Gaps)
-                if (isCurrent && _isInitialized && _videoController != null && !isLocked)
+                // 1. Instant Poster Thumbnail Background (Prevents black blank screen)
+                if (ep.thumbnailUrl.isNotEmpty)
+                  Positioned.fill(
+                    child: CachedNetworkImage(
+                      imageUrl: ep.thumbnailUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(color: const Color(0xFF0D0D12)),
+                      errorWidget: (_, __, ___) => Container(color: const Color(0xFF0D0D12)),
+                    ),
+                  ),
+
+                // 2. Video Player Surface (Full-Screen Edge-to-Edge with Zero Gaps)
+                if (isCurrent && _isInitialized && _videoController != null && isUnlocked)
                   SizedBox.expand(
                     child: FittedBox(
                       fit: BoxFit.cover,
@@ -621,7 +1063,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
                   )
                 else
                   Container(
-                    color: const Color(0xFF0D0D12),
+                    color: ep.thumbnailUrl.isNotEmpty ? Colors.transparent : const Color(0xFF0D0D12),
                     child: Center(
                       child: isLocked
                           ? const SizedBox.shrink()
@@ -869,8 +1311,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
                           IconButton(
                             icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
                             onPressed: () {
-                              _videoController?.pause();
-                              _videoController?.setVolume(0.0);
+                              _cleanupAndStopVideo();
                               drama.navigateBack();
                             },
                           ),
@@ -999,8 +1440,8 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
                     child: _InteractiveScrubberBar(controller: _videoController!),
                   ),
 
-                // 8. VIP Paywall Overlay (Triggered on Episode 6+)
-                if (isLocked)
+                // 7. Paywall Overlay (Shown on Episode 6+ when VIP inactive)
+                if (isLocked && isCurrent)
                   Positioned.fill(
                     child: Container(
                       color: Colors.black.withValues(alpha: 0.92),
@@ -1011,37 +1452,96 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
                           Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: AppTheme.storyTvPink.withValues(alpha: 0.15),
+                              color: AppTheme.storyTvPink.withValues(alpha: 0.2),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(Icons.lock, color: AppTheme.storyTvPink, size: 44),
+                            child: const Icon(Icons.lock_rounded, color: AppTheme.storyTvPink, size: 40),
                           ),
                           const SizedBox(height: 16),
                           Text(
                             'Episode ${ep.episodeNumber} is Locked',
-                            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 6),
+                          const SizedBox(height: 8),
                           const Text(
-                            'Episodes 1–5 are complimentary. Activate the 1-Day Trial Pass for ₹1 (then ₹599/mo AutoPay) to unlock all episodes.',
+                            'Episodes 1–5 are complimentary. Watch a short ad to unlock this episode for free, or activate VIP for ad-free streaming.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: AppTheme.textMuted, fontSize: 12, height: 1.4),
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 20),
 
-                          // Pay ₹1 Trial Button
+                          // 1. WATCH AD TO UNLOCK (FREE) / RETRY
                           SizedBox(
                             width: double.infinity,
-                            height: 46,
-                            child: ElevatedButton(
-                              onPressed: () => drama.openAutoPayDialog(),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.storyTvPink,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            height: 48,
+                            child: ElevatedButton.icon(
+                              onPressed: _isUnlockingWithAd
+                                  ? null
+                                  : () => _unlockEpisodeWithRewardedAd(drama, series, ep),
+                              icon: _isUnlockingWithAd
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                    )
+                                  : Icon(
+                                      _adErrorMessage != null
+                                          ? Icons.refresh_rounded
+                                          : Icons.play_circle_fill_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                              label: Text(
+                                _isUnlockingWithAd
+                                    ? 'PREPARING AD...'
+                                    : (_adErrorMessage != null
+                                        ? 'RETRY WATCHING AD ➔'
+                                        : 'WATCH AD TO UNLOCK (FREE)'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  letterSpacing: 0.5,
+                                ),
                               ),
-                              child: const Text(
-                                'ACTIVATE 1-DAY TRIAL FOR ₹1 ➔',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _adErrorMessage != null
+                                    ? const Color(0xFFD32F2F)
+                                    : AppTheme.storyTvPink,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                elevation: 4,
+                              ),
+                            ),
+                          ),
+                          if (_adErrorMessage != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _adErrorMessage!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.amberAccent, fontSize: 11),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+
+                          // 2. VIP PASS (NO ADS)
+                          SizedBox(
+                            width: double.infinity,
+                            height: 44,
+                            child: OutlinedButton.icon(
+                              onPressed: () => drama.openAutoPayDialog(),
+                              icon: const Icon(Icons.workspace_premium_rounded, color: Color(0xFFFFD700), size: 18),
+                              label: const Text(
+                                'VIP PASS (₹1 TRIAL) • NO ADS ➔',
+                                style: TextStyle(
+                                  color: Color(0xFFFFD700),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Color(0xFFFFD700), width: 1.2),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                backgroundColor: const Color(0xFFFFD700).withValues(alpha: 0.08),
                               ),
                             ),
                           ),

@@ -484,6 +484,19 @@ module.exports = {
     return [];
   },
 
+  async getEpisode(seriesId, episodeNumber) {
+    try {
+      const num = parseInt(episodeNumber, 10);
+      if (mongoose.connection.readyState === 1) {
+        const ep = await EpisodeModel.findOne({ seriesId, episodeNumber: num }).lean();
+        if (ep) return ep;
+      }
+    } catch (e) {
+      console.error('[MongoDB Error] getEpisode:', e.message);
+    }
+    return null;
+  },
+
   // Subscriptions
   async getSubscription(userId) {
     const start = process.hrtime();

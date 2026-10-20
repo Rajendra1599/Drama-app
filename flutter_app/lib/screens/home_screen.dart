@@ -80,11 +80,11 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
             ),
 
           // ===================================================================
-          // 1. HERO SLIDER BANNER
+          // 1. HERO SLIDER BANNER (Randomized showcase)
           // ===================================================================
           if (allSeries.isNotEmpty)
             HeroSlider(
-              stories: allSeries.take(6).toList(),
+              stories: drama.shuffledSeries.take(6).toList(),
               onWatchNow: (id) => drama.startOrResumeSeries(id),
               onOpenDetails: (id) => drama.startOrResumeSeries(id),
               onToggleWatchlist: (id) => drama.toggleWatchlist(id),
@@ -124,7 +124,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           ],
 
           // ===================================================================
-          // 3. TRENDING NOW
+          // 3. TRENDING NOW (Randomized / Popular Selection)
           // ===================================================================
           if (popular.isNotEmpty) ...[
             StoryTvSectionHeader(
@@ -155,38 +155,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           ],
 
           // ===================================================================
-          // 4. CEO & BILLIONAIRE DRAMAS
-          // ===================================================================
-          if (allSeries.isNotEmpty) ...[
-            StoryTvSectionHeader(
-              title: 'CEO & Billionaire',
-              subtitle: 'High stakes, secret heirs & revenge romances',
-              onSeeAll: () => SeeAllDramasSheet.show(
-                context,
-                title: 'CEO & Billionaire Dramas',
-                subtitle: 'Secret Heirs & Romance',
-                stories: allSeries,
-              ),
-            ),
-            SizedBox(
-              height: 200,
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                scrollDirection: Axis.horizontal,
-                itemCount: allSeries.length,
-                itemBuilder: (context, index) {
-                  return PureStoryThumbnailCard(
-                    series: allSeries[index],
-                    onTap: () => drama.startOrResumeSeries(allSeries[index].id),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-
-          // ===================================================================
-          // 5. NEW RELEASES
+          // 4. NEW RELEASES
           // ===================================================================
           if (newReleases.isNotEmpty) ...[
             StoryTvSectionHeader(
@@ -217,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           ],
 
           // ===================================================================
-          // 6. ALL UPLOADED STORIES & DRAMAS (Cards arranged one after another)
+          // 5. ALL UPLOADED STORIES & DRAMAS (Randomized & Shuffled Grid)
           // ===================================================================
           if (allSeries.isNotEmpty) ...[
             StoryTvSectionHeader(
@@ -227,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                 context,
                 title: 'All Uploaded Stories',
                 subtitle: 'Full Library',
-                stories: allSeries,
+                stories: drama.shuffledSeries,
               ),
             ),
             Padding(
@@ -235,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
               child: GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                itemCount: allSeries.length,
+                itemCount: drama.shuffledSeries.length,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 3,
                   childAspectRatio: 9 / 15,
@@ -243,9 +212,10 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                   mainAxisSpacing: 16,
                 ),
                 itemBuilder: (context, index) {
+                  final s = drama.shuffledSeries[index];
                   return PureStoryThumbnailCard(
-                    series: allSeries[index],
-                    onTap: () => drama.startOrResumeSeries(allSeries[index].id),
+                    series: s,
+                    onTap: () => drama.startOrResumeSeries(s.id),
                   );
                 },
               ),

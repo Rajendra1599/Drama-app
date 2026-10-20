@@ -9,6 +9,7 @@ class EpisodesBottomSheet extends StatelessWidget {
   final bool isVip;
   final ValueChanged<int> onSelectEpisode;
   final VoidCallback onUnlockVip;
+  final bool Function(int episodeNumber)? isEpisodeLocked;
 
   const EpisodesBottomSheet({
     super.key,
@@ -17,6 +18,7 @@ class EpisodesBottomSheet extends StatelessWidget {
     required this.isVip,
     required this.onSelectEpisode,
     required this.onUnlockVip,
+    this.isEpisodeLocked,
   });
 
   @override
@@ -77,15 +79,13 @@ class EpisodesBottomSheet extends StatelessWidget {
               itemBuilder: (context, index) {
                 final ep = episodes[index];
                 final isCurrent = ep.episodeNumber == activeEpisodeNumber;
-                final isLocked = !isVip && ep.episodeNumber > 5;
+                final isLocked = isEpisodeLocked != null
+                    ? isEpisodeLocked!(ep.episodeNumber)
+                    : (!isVip && ep.episodeNumber > 5);
 
                 return InkWell(
                   onTap: () {
-                    if (isLocked) {
-                      onUnlockVip();
-                    } else {
-                      onSelectEpisode(ep.episodeNumber);
-                    }
+                    onSelectEpisode(ep.episodeNumber);
                   },
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 10),
@@ -165,7 +165,7 @@ class EpisodesBottomSheet extends StatelessWidget {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${ep.durationSeconds}s • ${isLocked ? 'VIP Only' : 'Free'}',
+                                '${ep.durationSeconds}s • ${isLocked ? 'Locked (Ad/VIP)' : 'Free'}',
                                 style: TextStyle(
                                   color: isLocked
                                       ? AppTheme.dramaGold
