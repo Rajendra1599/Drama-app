@@ -222,7 +222,7 @@ async function runAllLoadTests() {
     })
   }));
 
-  // Scenario 5: Video Stream Authorization (Signed Cloudinary Stream URLs)
+  // Scenario 5: Video Stream Authorization (Signed AWS CloudFront Stream URLs)
   results.push(await runScenario({
     name: '5. Video Playback Authorization (HMAC Signed URLs)',
     concurrency: 60,

@@ -14,16 +14,14 @@ services:
         value: "*"
       - key: MONGODB_URI
         sync: false
-      - key: CLOUDINARY_CLOUD_NAME
+      - key: VIDEO_CDN_BASE_URL
+        value: https://d28mhdc66x7nyq.cloudfront.net
+      - key: CLOUDFRONT_KEY_PAIR_ID
+        value: K14SZHS1YOCZG1
+      - key: CLOUDFRONT_PRIVATE_KEY
         sync: false
-      - key: CLOUDINARY_API_KEY
-        sync: false
-      - key: CLOUDINARY_API_SECRET
-        sync: false
-      - key: CLOUDINARY_URL
-        sync: false
-      - key: CLOUDINARY_UPLOAD_PRESET
-        value: storyup_vertical_preset
+      - key: MEDIA_CDN_PROVIDER
+        value: cloudfront
       - key: PHONEPE_MERCHANT_ID
         value: M220610193189
       - key: PHONEPE_SALT_KEY

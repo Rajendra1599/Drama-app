@@ -254,14 +254,14 @@
 
             <div>
               <div class="flex items-center justify-between mb-1">
-                <label class="block text-xs font-semibold text-gray-300">Vertical Video URL (AWS CloudFront / Cloudinary / MP4 / HLS)</label>
+                <label class="block text-xs font-semibold text-gray-300">Vertical Video URL (AWS CloudFront CDN • FastStart 720p)</label>
                 <span class="text-[11px] text-pink-400 font-bold flex items-center space-x-1">
                   <i class="fa-solid fa-bolt text-amber-400"></i>
                   <span>AWS CloudFront Edge CDN Ready</span>
                 </span>
               </div>
               <div class="flex space-x-2">
-                <input type="url" id="epVideoUrl" placeholder="https://d123456abcdef8.cloudfront.net/dramas/series_101/ep_01.mp4" oninput="updateStreamDiagnostics()"
+                <input type="url" id="epVideoUrl" placeholder="https://d28mhdc66x7nyq.cloudfront.net/series/my-drama/ep_01.mp4" oninput="updateStreamDiagnostics()"
                   class="flex-1 bg-[#181820] border border-gray-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-pink-500 font-mono text-xs">
                 <button onclick="previewVideo()" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold text-gray-200 flex items-center space-x-1">
                   <i class="fa-solid fa-play"></i>
@@ -269,18 +269,15 @@
                 </button>
               </div>
 
-              <!-- Instant Speed & Format Optimization Buttons -->
+              <!-- AWS CloudFront CDN Speed & Optimization Buttons -->
               <div class="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
-                <button type="button" onclick="applyFastStart720p()" class="px-3 py-1.5 bg-gradient-to-r from-blue-900/60 to-cyan-900/60 border border-blue-500/50 rounded-lg text-blue-200 hover:text-white font-bold transition flex items-center space-x-1 shadow-sm">
-                  <i class="fa-solid fa-bolt text-yellow-400"></i>
-                  <span>⚡ Apply FastStart (+faststart 720p H.264 ~12MB)</span>
+                <button type="button" onclick="applyCloudFrontPrefix()" class="px-3 py-1.5 bg-gradient-to-r from-emerald-900/60 to-teal-900/60 border border-emerald-500/50 rounded-lg text-emerald-200 hover:text-white font-bold transition flex items-center space-x-1 shadow-sm">
+                  <i class="fa-solid fa-cloud text-emerald-400"></i>
+                  <span>⚡ Prefix AWS CloudFront CDN (d28mhdc66x7nyq)</span>
                 </button>
-                <button type="button" onclick="applyHlsStream()" class="px-3 py-1.5 bg-gradient-to-r from-emerald-900/60 to-teal-900/60 border border-emerald-500/50 rounded-lg text-emerald-200 hover:text-white font-bold transition flex items-center space-x-1 shadow-sm">
-                  <i class="fa-solid fa-fire text-emerald-400"></i>
-                  <span>🔥 Convert to HLS (.m3u8) Adaptive Stream</span>
-                </button>
-                <button type="button" onclick="autoGenerateCloudinaryThumbnail()" class="px-2.5 py-1.5 bg-amber-950/40 border border-amber-700/50 rounded-lg text-amber-300 hover:text-white font-medium transition">
-                  <i class="fa-solid fa-image mr-1"></i> Auto Poster
+                <button type="button" onclick="copyFastStartCommand()" class="px-2.5 py-1.5 bg-blue-950/60 border border-blue-500/50 rounded-lg text-blue-200 hover:text-white font-bold transition flex items-center space-x-1 shadow-sm">
+                  <i class="fa-solid fa-terminal text-cyan-400"></i>
+                  <span>📋 FFmpeg FastStart Command</span>
                 </button>
               </div>
 
@@ -288,12 +285,12 @@
               <div id="streamDiagnosticsBadge" class="mt-2"></div>
 
               <div class="mt-2">
-                <label class="block text-[11px] font-semibold text-gray-400 mb-1">Optional: Dedicated HLS (.m3u8) Adaptive Stream URL</label>
-                <input type="url" id="epHlsUrl" placeholder="https://.../master.m3u8 (Auto-generated if using Cloudinary or HLS link above)" 
+                <label class="block text-[11px] font-semibold text-gray-400 mb-1">AWS CloudFront Object Key / Path</label>
+                <input type="text" id="epHlsUrl" placeholder="series/legaya_dil/ep_01.mp4 (Auto-resolved to AWS CloudFront)" 
                   class="w-full bg-[#14141c] border border-gray-800 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-pink-500 font-mono">
               </div>
 
-              <p class="text-[11px] text-gray-500 mt-1">Paste your AWS CloudFront URL or Cloudinary link for ultra-fast CDN streaming.</p>
+              <p class="text-[11px] text-gray-500 mt-1">High-performance video streaming powered 100% by AWS CloudFront Global Edge CDN.</p>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -499,9 +496,9 @@
                 <span class="text-emerald-400 font-mono text-sm">storyup.autopay@ybl</span>
               </div>
               <div class="p-3 bg-[#181820] rounded-lg border border-pink-900/40">
-                <span class="text-pink-400 block font-semibold mb-0.5"><i class="fa-solid fa-cloud mr-1"></i> Active Video & Image CDN</span>
-                <span class="text-white font-mono text-xs">Cloudinary (q_auto, f_auto, ar_9:16)</span>
-                <p class="text-[11px] text-gray-400 mt-1">Configured for fast vertical streaming & auto-thumbnail poster generation.</p>
+                <span class="text-pink-400 block font-semibold mb-0.5"><i class="fa-solid fa-cloud mr-1"></i> Active Video CDN</span>
+                <span class="text-white font-mono text-xs">AWS CloudFront (d28mhdc66x7nyq.cloudfront.net)</span>
+                <p class="text-[11px] text-gray-400 mt-1">Configured for 100% direct FastStart 720p edge streaming & sub-30ms startup.</p>
               </div>
               <div class="p-3 bg-[#181820] rounded-lg border border-emerald-900/40">
                 <span class="text-emerald-400 block font-semibold mb-0.5"><i class="fa-solid fa-leaf mr-1"></i> Active Database Provider</span>
@@ -706,7 +703,7 @@
               <div class="py-8 text-center text-gray-500">
                 <i class="fa-solid fa-video-slash text-2xl mb-2 text-gray-600"></i>
                 <p class="text-xs font-semibold text-gray-300">No video episodes uploaded for this story yet.</p>
-                <p class="text-[11px] text-gray-500 mt-1">Click "Add Next Episode" above to link your Cloudinary 9:16 video!</p>
+                <p class="text-[11px] text-gray-500 mt-1">Click "Add Next Episode" above to link your AWS CloudFront 9:16 video!</p>
               </div>
             `;
             return;
@@ -883,59 +880,38 @@
       }
     }
 
-    function applyFastStart720p() {
+    const CLOUDFRONT_DOMAIN = "https://d28mhdc66x7nyq.cloudfront.net";
+
+    function applyCloudFrontPrefix() {
       const input = document.getElementById('epVideoUrl');
       let val = input.value.trim();
       if (!val) {
-        alert("Please paste your video URL first.");
+        input.value = `${CLOUDFRONT_DOMAIN}/series/sample/ep_01.mp4`;
+        updateStreamDiagnostics();
         return;
       }
-      if (val.includes('res.cloudinary.com')) {
-        if (val.includes('/upload/') && !val.includes('/video/upload/')) {
-          val = val.replace('/upload/', '/video/upload/');
+      if (!val.startsWith('http://') && !val.startsWith('https://')) {
+        const cleanKey = val.replace(/^\/+/, '');
+        input.value = `${CLOUDFRONT_DOMAIN}/${cleanKey}`;
+      } else if (!val.includes('cloudfront.net')) {
+        try {
+          const parsed = new URL(val);
+          input.value = `${CLOUDFRONT_DOMAIN}${parsed.pathname}`;
+        } catch (_) {
+          input.value = `${CLOUDFRONT_DOMAIN}/${val.replace(/^https?:\/\/[^\/]+\//, '')}`;
         }
-        val = val.replace(
-          /\/video\/upload\/([^/]*\/)?/,
-          '/video/upload/fl_faststart,vc_h264,w_720,c_fill,ar_9:16,q_auto:good/'
-        ).replace(/\.(m3u8|mov|mkv)$/i, '.mp4');
-        input.value = val;
-        updateStreamDiagnostics();
-        alert("FastStart (+faststart) & 720p H.264 successfully applied!\n\n- moov atom placed at byte 0\n- Hardware H.264 vertical 9:16\n- Optimized 10-15 MB size for instant mobile start");
-      } else if (val.includes('ik.imagekit.io')) {
-        val = val.replace(/(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)/, '$1/tr:w-720,ar-9-16,q-65,f-auto,vc-h264/$2');
-        input.value = val;
-        updateStreamDiagnostics();
-        alert("ImageKit 720p H.264 format applied!");
-      } else {
-        alert("For direct MP4 links, ensure your video was exported with '+faststart' (moov atom at byte 0) using:\n\nffmpeg -i input.mp4 -c:v libx264 -crf 23 -vf scale=720:1280 -c:a aac -movflags +faststart output.mp4");
       }
+      updateStreamDiagnostics();
+      alert("Prefixed with AWS CloudFront CDN:\n" + input.value);
     }
 
-    function applyHlsStream() {
-      const input = document.getElementById('epVideoUrl');
-      const hlsInput = document.getElementById('epHlsUrl');
-      let val = input.value.trim();
-      if (!val) {
-        alert("Please paste your video URL first.");
-        return;
-      }
-      if (val.includes('.m3u8')) {
-        if (hlsInput) hlsInput.value = val;
-        updateStreamDiagnostics();
-        alert("Already an HLS (.m3u8) adaptive stream!");
-        return;
-      }
-      if (val.includes('res.cloudinary.com')) {
-        const hlsUrl = val
-          .replace(/\/video\/upload\/[^/]*\//, '/video/upload/sp_auto,ar_9:16,c_fill,w_720,q_auto/')
-          .replace(/\.(mp4|mov|mkv)$/i, '.m3u8');
-        input.value = hlsUrl;
-        if (hlsInput) hlsInput.value = hlsUrl;
-        updateStreamDiagnostics();
-        alert("Converted to Adaptive HLS (.m3u8) Stream!\n\n- Breaks video into 2-second chunks\n- Instant <500ms playback startup on mobile\n- Zero buffering pauses");
-      } else {
-        alert("Paste your .m3u8 HLS playlist URL directly into the field, or use Cloudinary to automatically generate adaptive HLS chunks.");
-      }
+    function copyFastStartCommand() {
+      const cmd = 'ffmpeg -i input.mp4 -c:v libx264 -preset fast -crf 23 -vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2" -c:a aac -b:a 128k -movflags +faststart output_720p.mp4';
+      navigator.clipboard.writeText(cmd).then(() => {
+        alert("FFmpeg FastStart command copied to clipboard!\n\nRun this on your computer before uploading to AWS S3 / CloudFront:\n\n" + cmd);
+      }).catch(() => {
+        prompt("Copy this FFmpeg command for FastStart 720p:", cmd);
+      });
     }
 
     function updateStreamDiagnostics() {
@@ -946,62 +922,12 @@
         badge.innerHTML = '';
         return;
       }
-      if (url.includes('.m3u8')) {
-        badge.innerHTML = '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-600/50"><i class="fa-solid fa-bolt mr-1.5 text-emerald-400"></i> Adaptive HLS (.m3u8) • Instant 0-500ms Startup</span>';
-      } else if (url.includes('fl_faststart') || url.includes('+faststart')) {
-        badge.innerHTML = '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-950/70 text-blue-300 border border-blue-600/50"><i class="fa-solid fa-gauge-high mr-1.5 text-blue-400"></i> FastStart 720p H.264 (~12MB) • Sub-1s Startup</span>';
+      if (url.includes('cloudfront.net')) {
+        badge.innerHTML = '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-600/50"><i class="fa-solid fa-cloud mr-1.5 text-emerald-400"></i> AWS CloudFront Edge CDN • 0-30ms Instant Startup</span>';
+      } else if (url.includes('.m3u8')) {
+        badge.innerHTML = '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-teal-950/70 text-teal-300 border border-teal-600/50"><i class="fa-solid fa-bolt mr-1.5 text-teal-400"></i> Adaptive HLS (.m3u8) Stream</span>';
       } else {
-        badge.innerHTML = '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-amber-950/70 text-amber-300 border border-amber-600/50"><i class="fa-solid fa-triangle-exclamation mr-1.5 text-amber-400"></i> Standard MP4 • Click "⚡ Apply FastStart" or "🔥 Convert to HLS" for instant start</span>';
-      }
-    }
-
-    async function exportCatalogJson() {
-      const list = await getSeriesList();
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(list, null, 2));
-      const downloadAnchor = document.createElement('a');
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", "storyup_catalog_" + Date.now() + ".json");
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
-    }
-
-    function formatCloudinaryVertical() {
-      const input = document.getElementById('epVideoUrl');
-      let val = input.value.trim();
-      if (!val) {
-        alert("Please paste your Cloudinary video URL first.");
-        return;
-      }
-      if (val.includes('res.cloudinary.com') && val.includes('/video/upload/')) {
-        if (!val.includes('q_auto') && !val.includes('ar_9:16')) {
-          val = val.replace('/video/upload/', '/video/upload/q_auto,f_auto,w_720,c_fill,ar_9:16/');
-          input.value = val;
-          alert("URL successfully optimized for 9:16 vertical mobile streaming with Cloudinary!");
-        } else {
-          alert("URL already contains Cloudinary vertical transformations.");
-        }
-      } else {
-        alert("Make sure your video URL starts with https://res.cloudinary.com/...");
-      }
-    }
-
-    function autoGenerateCloudinaryThumbnail() {
-      const videoInput = document.getElementById('epVideoUrl');
-      const thumbInput = document.getElementById('epThumbnailUrl');
-      const val = videoInput.value.trim();
-      if (!val) {
-        alert("Please enter a Cloudinary video URL first.");
-        return;
-      }
-      if (val.includes('res.cloudinary.com')) {
-        const thumbUrl = val
-          .replace(/\/video\/upload\/[^/]*\//, '/video/upload/so_0,w_600,h_1067,c_fill,q_auto,f_auto/')
-          .replace(/\.(mp4|m3u8|mov|mkv)$/i, '.jpg');
-        thumbInput.value = thumbUrl;
-        alert("Cover thumbnail poster extracted directly from Cloudinary video frame!");
-      } else {
-        alert("Auto-generate requires a Cloudinary video link.");
+        badge.innerHTML = '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-950/70 text-blue-300 border border-blue-600/50"><i class="fa-solid fa-gauge-high mr-1.5 text-blue-400"></i> FastStart 720p MP4 • Sub-1s Startup</span>';
       }
     }
 

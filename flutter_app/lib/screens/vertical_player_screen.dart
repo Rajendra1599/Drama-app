@@ -502,6 +502,18 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         } catch (_) {}
       }
 
+      if (!mounted || _isDisposed || currentSeq != _initSequenceId) {
+        try {
+          activeCtrl.pause();
+          activeCtrl.setVolume(0.0);
+          activeCtrl.dispose();
+          _allocatedControllers.remove(activeCtrl);
+        } catch (_) {}
+        _isConnecting = false;
+        _targetLoadingUrl = null;
+        return;
+      }
+
       final oldController = _videoController;
       _videoController = activeCtrl;
       if (oldController != null && oldController != activeCtrl) {
@@ -513,7 +525,9 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         } catch (_) {}
       }
 
-      await _videoController!.setVolume(_isMuted ? 0.0 : 1.0);
+      try {
+        await _videoController?.setVolume(_isMuted ? 0.0 : 1.0);
+      } catch (_) {}
       _isConnecting = false;
       _targetLoadingUrl = null;
 
@@ -524,7 +538,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       }
 
       try {
-        await _videoController!.play();
+        await _videoController?.play();
       } catch (_) {}
 
       final durSec = activeCtrl.value.duration.inSeconds;
@@ -651,8 +665,10 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         }
       }
 
-      await controller.setLooping(false); // Do not loop: auto-advance or show ad
-      await controller.setVolume(_isMuted ? 0.0 : 1.0);
+      try {
+        await controller.setLooping(false); // Do not loop: auto-advance or show ad
+        await controller.setVolume(_isMuted ? 0.0 : 1.0);
+      } catch (_) {}
 
       _isConnecting = false;
       _targetLoadingUrl = null;

@@ -5,8 +5,8 @@
  * - Stateless Multi-Instance Clustering Ready (No in-memory session states)
  * - Distributed Upstash Redis Cache-Aside & Sliding-Window Rate Limiting
  * - High-Throughput Batched View Aggregation (Zero DB spike under viral traffic)
- * - 100% Zero-Server Media Bandwidth: Cloudinary Adaptive HLS (.m3u8) / MP4 Streaming
- * - Direct Client-to-Cloudinary Signed Media Uploads
+ * - 100% Zero-Server Media Bandwidth: AWS CloudFront Edge CDN FastStart MP4 / HLS Streaming
+ * - Direct Client-to-S3 / CloudFront Media Delivery
  * - BullMQ Asynchronous Video Transcoding Pipeline
  * - Full PhonePe UPI AutoPay Verification with Distributed Webhook Idempotency
  * - Prometheus Telemetry (/metrics) & Kubernetes Health Probes (/health/live, /health/ready)
@@ -888,7 +888,7 @@ app.post('/api/subscription/cancel', async (req, res, next) => {
 
 /**
  * Authorize Episode Playback
- * Generates signed Cloudinary HLS / MP4 stream URLs.
+ * Generates signed AWS CloudFront HLS / FastStart MP4 stream URLs.
  * Crucial: Video bytes NEVER touch this Express process!
  */
 app.post('/api/episodes/authorize', async (req, res, next) => {
@@ -1149,8 +1149,8 @@ app.post('/api/admin/resolve-link', async (req, res) => {
 });
 
 /**
- * Direct-to-Cloudinary Upload Signature
- * Allows Creator Studio / Admin to upload video directly from device to CDN
+ * Direct-to-S3 / CloudFront Upload Signature
+ * Allows Creator Studio / Admin to upload video directly to S3 / CloudFront
  */
 app.post('/api/episodes/direct-upload-signature', uploadLimiter, (req, res) => {
   const { folder = 'microdrama/episodes' } = req.body;

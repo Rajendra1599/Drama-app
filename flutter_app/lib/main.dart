@@ -30,6 +30,30 @@ import 'screens/vertical_player_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('🚨 [FLUTTER_ERROR] ${details.exceptionAsString()}');
+    debugPrint('🚨 [FLUTTER_STACK] ${details.stack}');
+  };
+
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    debugPrint('🚨 [BUILD_ERROR] ${details.exceptionAsString()}');
+    return Material(
+      color: const Color(0xFF161622),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            child: Text(
+              '⚠️ Render Error:\n${details.exceptionAsString()}\n\n${details.stack}',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+            ),
+          ),
+        ),
+      ),
+    );
+  };
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,

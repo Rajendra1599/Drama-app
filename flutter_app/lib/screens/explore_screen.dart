@@ -123,14 +123,8 @@ class _ExploreScreenState extends State<ExploreScreen> with WidgetsBindingObserv
   static String _optimizeVideoUrl(String rawUrl) {
     var url = rawUrl.trim();
     if (url.isEmpty) return url;
-
-    if (url.contains('res.cloudinary.com')) {
-      if (url.contains('/upload/') && !url.contains('/video/upload/')) {
-        url = url.replaceFirst('/upload/', '/video/upload/');
-      }
-      if (!url.contains('q_auto')) {
-        url = url.replaceFirst('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
-      }
+    if (url.startsWith('http://')) {
+      url = url.replaceFirst('http://', 'https://');
     }
     return url;
   }

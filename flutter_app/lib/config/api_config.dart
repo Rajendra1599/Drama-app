@@ -5,6 +5,8 @@ class ApiConfig {
   static const String liveBaseUrl = 'https://updated-story-up.onrender.com';
   // Fast Local USB / Localhost Backend (mapped via adb reverse tcp:5000 tcp:5000)
   static const String localBaseUrl = 'http://127.0.0.1:5000';
+  // Fast Local Wi-Fi / LAN IP (works directly without USB/adb reverse)
+  static const String lanBaseUrl = 'http://192.168.1.33:5000';
 
   static String _overrideBaseUrl = '';
 
@@ -22,6 +24,10 @@ class ApiConfig {
 
   static void useLocal() {
     _overrideBaseUrl = localBaseUrl;
+  }
+
+  static void useLan() {
+    _overrideBaseUrl = lanBaseUrl;
   }
 
   // Endpoints
@@ -46,4 +52,6 @@ class ApiConfig {
   static String get cancelSubscription => '$baseUrl/api/subscription/cancel';
   static String dramaEpisodes(String seriesId) =>
       '$baseUrl/api/dramas/$seriesId/episodes';
+  static String episodePlayback(String episodeId) =>
+      '$baseUrl/api/episodes/$episodeId/playback';
 }
