@@ -137,11 +137,14 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
-// Serve Static Admin Web Portal
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/admin', (req, res) => {
+// Serve Static Admin Web Portal with strict no-cache headers
+app.get(['/admin', '/admin/'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(path.join(__dirname, 'public/admin/index.html'));
 });
+app.use(express.static(path.join(__dirname, 'public')));
 
 // =============================================================================
 // HEALTH, METRICS & LIVENESS PROBES

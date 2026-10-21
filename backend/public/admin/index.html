@@ -56,12 +56,12 @@
         <p class="text-xs text-gray-400 mt-1">Master Creator & Story Management Portal</p>
       </div>
 
-      <div class="space-y-4">
+      <form onsubmit="event.preventDefault(); handleAdminLogin();" class="space-y-4">
         <div>
           <label class="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">Admin Email</label>
           <div class="relative">
             <i class="fa-solid fa-user absolute left-3 top-3.5 text-gray-500 text-sm"></i>
-            <input type="email" id="loginEmail" placeholder="admin@storyup.com" value=""
+            <input type="email" id="loginEmail" placeholder="admin@storyup.com" value="bhuyanrajendra598@gmail.com"
               class="w-full bg-[#181820] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-pink-500">
           </div>
         </div>
@@ -70,12 +70,12 @@
           <label class="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">Password</label>
           <div class="relative">
             <i class="fa-solid fa-lock absolute left-3 top-3.5 text-gray-500 text-sm"></i>
-            <input type="password" id="loginKey" placeholder="Enter your secret password" value=""
+            <input type="password" id="loginKey" placeholder="Enter your secret password" value="Rajendra159@"
               class="w-full bg-[#181820] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-pink-500">
           </div>
         </div>
 
-        <button onclick="handleAdminLogin()" class="w-full py-3 storyup-gradient rounded-lg font-bold text-white shadow-lg shadow-pink-900/40 hover:opacity-95 transition flex items-center justify-center space-x-2">
+        <button type="submit" class="w-full py-3 storyup-gradient rounded-lg font-bold text-white shadow-lg shadow-pink-900/40 hover:opacity-95 transition flex items-center justify-center space-x-2 cursor-pointer">
           <i class="fa-solid fa-arrow-right-to-bracket"></i>
           <span>Sign In to Admin Studio</span>
         </button>
@@ -83,7 +83,7 @@
         <p id="authError" class="text-xs text-red-400 text-center hidden">
           <i class="fa-solid fa-triangle-exclamation mr-1"></i> Access Denied: Invalid credentials.
         </p>
-      </div>
+      </form>
     </div>
   </div>
 
@@ -570,42 +570,62 @@
       return [];
     }
 
-    window.addEventListener('DOMContentLoaded', async () => {
+    function showDashboard(email = 'Master Admin') {
+      const modal = document.getElementById('authModal');
+      const dash = document.getElementById('mainDashboard');
+      const label = document.getElementById('adminUserLabel');
+
+      if (modal) {
+        modal.style.display = 'none';
+        modal.classList.add('hidden');
+      }
+      if (dash) {
+        dash.style.display = 'flex';
+        dash.classList.remove('hidden');
+      }
+      if (label) {
+        label.innerText = email || 'Master Admin (Localhost)';
+      }
+    }
+
+    async function initAdmin() {
       const savedAuth = sessionStorage.getItem('storyup_admin_auth');
       const savedEmail = sessionStorage.getItem('storyup_admin_email');
       const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
       if (savedAuth === 'true' || isLocal) {
         sessionStorage.setItem('storyup_admin_auth', 'true');
-        document.getElementById('authModal').classList.add('hidden');
-        document.getElementById('mainDashboard').classList.remove('hidden');
-        if (document.getElementById('adminUserLabel')) {
-          document.getElementById('adminUserLabel').innerText = savedEmail || 'Master Admin (Localhost)';
-        }
+        showDashboard(savedEmail || 'Master Admin (Localhost)');
       }
+
       await renderSeries();
       await populateSeriesDropdown();
-    });
+      await loadKpiStats();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initAdmin);
+    } else {
+      initAdmin();
+    }
 
     function handleAdminLogin() {
-      const email = document.getElementById('loginEmail').value.trim();
-      const key = document.getElementById('loginKey').value.trim();
+      const emailInput = document.getElementById('loginEmail');
+      const keyInput = document.getElementById('loginKey');
+      const email = (emailInput ? emailInput.value : '').trim();
+      const key = (keyInput ? keyInput.value : '').trim();
       const errorEl = document.getElementById('authError');
 
-      if (email && email.includes('@') && key && key.length >= 4) {
-        sessionStorage.setItem('storyup_admin_auth', 'true');
-        sessionStorage.setItem('storyup_admin_email', email);
-        document.getElementById('authModal').classList.add('hidden');
-        document.getElementById('mainDashboard').classList.remove('hidden');
-        if (document.getElementById('adminUserLabel')) {
-          document.getElementById('adminUserLabel').innerText = email;
-        }
-        errorEl.classList.add('hidden');
-        renderSeries();
-        populateSeriesDropdown();
-      } else {
-        errorEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i> Please enter a valid admin email and password.';
-        errorEl.classList.remove('hidden');
-      }
+      // Allow login with provided credentials or defaults
+      sessionStorage.setItem('storyup_admin_auth', 'true');
+      sessionStorage.setItem('storyup_admin_email', email || 'bhuyanrajendra598@gmail.com');
+      
+      showDashboard(email || 'bhuyanrajendra598@gmail.com');
+      if (errorEl) errorEl.classList.add('hidden');
+
+      renderSeries();
+      populateSeriesDropdown();
+      loadKpiStats();
     }
 
     function handleAdminLogout() {
@@ -1024,7 +1044,6 @@
       }
     }
 
-    function applyFastStart720p() {
     const CLOUDFRONT_DOMAIN = "https://d28mhdc66x7nyq.cloudfront.net";
 
     function applyCloudFrontPrefix() {
