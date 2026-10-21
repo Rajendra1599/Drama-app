@@ -1193,13 +1193,39 @@ app.get('/api/dramas', async (req, res, next) => {
       sortBy: sort
     });
 
+    const seriesList = result.data || [];
+    const seriesIds = seriesList.map(s => s.id);
+    const firstEpisodes = await db.getFirstEpisodesForSeries(seriesIds);
+    const epMap = {};
+    for (const ep of firstEpisodes) {
+      const vidUrl = ep.videoUrl ? videoCdnService.signCloudFrontUrl(ep.videoUrl) : '';
+      const hlsUrl = ep.hlsUrl ? videoCdnService.signCloudFrontUrl(ep.hlsUrl) : (ep.videoUrl ? videoCdnService.getHlsStreamUrl(ep.videoUrl) : '');
+      epMap[ep.seriesId] = {
+        id: ep.id,
+        seriesId: ep.seriesId,
+        episodeNumber: 1,
+        title: ep.title,
+        videoUrl: vidUrl,
+        hlsUrl: hlsUrl,
+        thumbnailUrl: ep.thumbnailUrl || '',
+        durationSeconds: ep.durationSeconds || 90,
+        isVipLocked: false
+      };
+    }
+
+    const enrichedSeries = seriesList.map(s => {
+      const sObj = (s && typeof s.toObject === 'function') ? s.toObject() : { ...s };
+      sObj.firstEpisode = epMap[s.id] || null;
+      return sObj;
+    });
+
     res.json({
       success: true,
       page: result.page,
       limit: result.limit,
       total: result.total,
       totalPages: result.totalPages,
-      series: result.data
+      series: enrichedSeries
     });
   } catch (e) {
     next(e);
@@ -1588,7 +1614,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`📡 URL: http://0.0.0.0:${PORT}`);
   console.log(`📊 Prometheus Metrics: http://0.0.0.0:${PORT}/metrics`);
   console.log(`🛡️ Rate Limiting: Active (Redis Distributed / Memory Fallback)`);
-  console.log(`🌐 Video Streaming: Cloudinary Edge CDN (Zero Express Bandwidth)`);
+  console.log(`🌐 Video Streaming: AWS CloudFront & S3 Edge CDN (Zero Express Bandwidth)`);
   console.log(`====================================================`);
 });
 

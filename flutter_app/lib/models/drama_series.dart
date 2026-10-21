@@ -1,3 +1,5 @@
+import 'episode.dart';
+
 class DramaSeries {
   final String id;
   final String title;
@@ -26,6 +28,7 @@ class DramaSeries {
   final int popularScore;
   final String castMembers;
   final String ageRating;
+  final Episode? firstEpisode;
 
   DramaSeries({
     required this.id,
@@ -55,6 +58,7 @@ class DramaSeries {
     this.popularScore = 0,
     this.castMembers = '',
     this.ageRating = '13+',
+    this.firstEpisode,
   });
 
   DramaSeries copyWith({
@@ -148,6 +152,7 @@ class DramaSeries {
       popularScore: (json['popularScore'] as num?)?.toInt() ?? 0,
       castMembers: json['castMembers']?.toString() ?? '',
       ageRating: json['ageRating']?.toString() ?? '13+',
+      firstEpisode: json['firstEpisode'] != null ? Episode.fromJson(json['firstEpisode']) : null,
     );
   }
 

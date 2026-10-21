@@ -484,6 +484,21 @@ module.exports = {
     return [];
   },
 
+  async getFirstEpisodesForSeries(seriesIds) {
+    if (!Array.isArray(seriesIds) || seriesIds.length === 0) return [];
+    try {
+      if (mongoose.connection.readyState === 1) {
+        return await EpisodeModel.find({
+          seriesId: { $in: seriesIds },
+          episodeNumber: 1
+        }).lean();
+      }
+    } catch (e) {
+      console.error('[MongoDB Error] getFirstEpisodesForSeries:', e.message);
+    }
+    return [];
+  },
+
   async getEpisode(seriesId, episodeNumber) {
     try {
       const num = parseInt(episodeNumber, 10);
@@ -493,6 +508,18 @@ module.exports = {
       }
     } catch (e) {
       console.error('[MongoDB Error] getEpisode:', e.message);
+    }
+    return null;
+  },
+
+  async getEpisodeById(id) {
+    try {
+      if (mongoose.connection.readyState === 1) {
+        const ep = await EpisodeModel.findOne({ id }).lean();
+        if (ep) return ep;
+      }
+    } catch (e) {
+      console.error('[MongoDB Error] getEpisodeById:', e.message);
     }
     return null;
   },

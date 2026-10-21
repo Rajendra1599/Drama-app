@@ -398,30 +398,23 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     return url;
   }
 
+  static final Map<String, VideoPlayerController> _prebufferedPool = {};
+
   static void prebufferVideoUrl(String rawUrl) async {
     final nextUrl = _optimizeVideoUrl(rawUrl);
     if (nextUrl.isEmpty) return;
 
     final canonicalNext = _canonicalUrl(nextUrl);
-    if (_prebufferedNextUrl != null &&
-        _canonicalUrl(_prebufferedNextUrl!) == canonicalNext &&
-        _prebufferedNextController != null &&
-        _prebufferedNextController!.value.isInitialized) {
-      return;
-    }
-
-    final oldPre = _prebufferedNextController;
-    _prebufferedNextController = null;
-    _prebufferedNextUrl = null;
-    if (oldPre != null) {
-      try {
-        oldPre.dispose();
-      } catch (_) {}
+    if (_prebufferedPool.containsKey(canonicalNext)) {
+      final existing = _prebufferedPool[canonicalNext];
+      if (existing != null && existing.value.isInitialized) {
+        return;
+      }
     }
 
     try {
       final safePreUri = _buildSafeVideoUri(nextUrl);
-      debugPrint('[PLAYER PRELOAD]\nepisode=ep_next\nstate=initializing\nhost=${safePreUri.host}\npath=${safePreUri.path}');
+      debugPrint('[PLAYER PRELOAD <30ms]\nstate=initializing\nhost=${safePreUri.host}\npath=${safePreUri.path}');
       final preCtrl = VideoPlayerController.networkUrl(
         safePreUri,
         httpHeaders: const {'Connection': 'keep-alive'},
@@ -431,11 +424,20 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       await preCtrl.setLooping(false);
       await preCtrl.setVolume(0.0);
 
+      if (_prebufferedPool.length >= 4) {
+        final oldestKey = _prebufferedPool.keys.first;
+        final oldest = _prebufferedPool.remove(oldestKey);
+        try {
+          oldest?.dispose();
+        } catch (_) {}
+      }
+
+      _prebufferedPool[canonicalNext] = preCtrl;
       _prebufferedNextController = preCtrl;
       _prebufferedNextUrl = nextUrl;
-      debugPrint('[PLAYER PRELOAD]\nepisode=ep_next\nstate=prebuffered');
+      debugPrint('[PLAYER PRELOAD <30ms]\nstate=ready_chunk_buffered');
     } catch (e) {
-      debugPrint('[PLAYER PRELOAD ERROR]\nepisode=ep_next\nmessage=${e.toString()}');
+      debugPrint('[PLAYER PRELOAD ERROR]\nmessage=${e.toString()}');
     }
   }
 
@@ -479,23 +481,30 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
     final safeUri = _buildSafeVideoUri(trimmedUrl);
     final epNumStr = 'ep_${ep?.episodeNumber ?? _currentEpisodeNum}';
+    final canonicalTarget = _canonicalUrl(trimmedUrl);
 
-    // FAST-PATH: If this video was pre-buffered in the background, use it INSTANTLY (0s delay)!
-    if (_prebufferedNextController != null &&
-        _canonicalUrl(_prebufferedNextUrl ?? '') == _canonicalUrl(trimmedUrl)) {
-      final readyCtrl = _prebufferedNextController!;
+    // FAST-PATH (<30ms): If Episode 1 or next episode was pre-buffered in pool, start INSTANTLY!
+    VideoPlayerController? readyCtrl;
+    if (_prebufferedPool.containsKey(canonicalTarget)) {
+      readyCtrl = _prebufferedPool.remove(canonicalTarget);
+    } else if (_prebufferedNextController != null &&
+        _canonicalUrl(_prebufferedNextUrl ?? '') == canonicalTarget) {
+      readyCtrl = _prebufferedNextController;
       _prebufferedNextController = null;
       _prebufferedNextUrl = null;
+    }
 
-      if (!readyCtrl.value.isInitialized) {
+    if (readyCtrl != null) {
+      final activeCtrl = readyCtrl;
+      if (!activeCtrl.value.isInitialized) {
         try {
-          await readyCtrl.initialize();
+          await activeCtrl.initialize();
         } catch (_) {}
       }
 
       final oldController = _videoController;
-      _videoController = readyCtrl;
-      if (oldController != null && oldController != readyCtrl) {
+      _videoController = activeCtrl;
+      if (oldController != null && oldController != activeCtrl) {
         try {
           oldController.setVolume(0.0);
           oldController.pause();
@@ -518,23 +527,23 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         await _videoController!.play();
       } catch (_) {}
 
-      final durSec = readyCtrl.value.duration.inSeconds;
-      final w = readyCtrl.value.size.width.toInt();
-      final h = readyCtrl.value.size.height.toInt();
-      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=initialized\nduration=${durSec}s\nsize=${w}x$h');
-      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=playing');
+      final durSec = activeCtrl.value.duration.inSeconds;
+      final w = activeCtrl.value.size.width.toInt();
+      final h = activeCtrl.value.size.height.toInt();
+      debugPrint('[PLAYER FASTPATH <30ms]\nepisode=$epNumStr\nstate=initialized\nduration=${durSec}s\nsize=${w}x$h');
+      debugPrint('[PLAYER FASTPATH <30ms]\nepisode=$epNumStr\nstate=playing');
 
       final qoeMetrics = StreamingConfig.getMetrics(ep?.id ?? epNumStr);
       qoeMetrics.markFirstFrameRendered();
 
       int lastRecordedSec = -1;
-      readyCtrl.addListener(() {
-        if (!mounted || _videoController != readyCtrl || currentSeq != _initSequenceId) return;
-        final pos = readyCtrl.value.position.inSeconds;
-        final dur = readyCtrl.value.duration.inSeconds;
+      activeCtrl.addListener(() {
+        if (!mounted || _videoController != activeCtrl || currentSeq != _initSequenceId) return;
+        final pos = activeCtrl.value.position.inSeconds;
+        final dur = activeCtrl.value.duration.inSeconds;
 
         // QoE Buffer Stall Tracking
-        if (readyCtrl.value.isBuffering) {
+        if (activeCtrl.value.isBuffering) {
           qoeMetrics.markRebufferStart();
         } else {
           qoeMetrics.markRebufferEnd();
@@ -564,7 +573,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
             );
           }
         }
-        if (dur > 0 && readyCtrl.value.position >= readyCtrl.value.duration) {
+        if (dur > 0 && activeCtrl.value.position >= activeCtrl.value.duration) {
           _onVideoCompleted();
         }
       });

@@ -14,6 +14,7 @@ import '../services/api_service.dart';
 import '../services/payment_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/web_video_interop.dart';
+import '../screens/vertical_player_screen.dart';
 
 class DramaProvider extends ChangeNotifier {
   // Navigation
@@ -229,11 +230,25 @@ class DramaProvider extends ChangeNotifier {
     final freshSeries = await ApiService.fetchCatalog();
     if (freshSeries.isNotEmpty) {
       _setupSeriesLists(freshSeries);
+      // Instantly register all firstEpisode objects into _seriesEpisodes!
+      for (final s in freshSeries) {
+        if (s.firstEpisode != null && (!_seriesEpisodes.containsKey(s.id) || _seriesEpisodes[s.id]!.isEmpty)) {
+          _seriesEpisodes[s.id] = [s.firstEpisode!];
+        }
+      }
       notifyListeners();
 
-      // Load episodes for initial active series without blocking whole app
-      if (_selectedSeriesId != null) {
-        loadEpisodesForSeries(_selectedSeriesId!);
+      // Immediately pre-buffer Episode 1 of the top dramas so clicking ANY card opens in < 30ms!
+      final topDramas = freshSeries.take(3);
+      for (final s in topDramas) {
+        if (s.firstEpisode != null) {
+          VerticalPlayerScreen.prebufferVideoUrl(s.firstEpisode!.playStreamUrl);
+        }
+      }
+
+      // Background sync full episode list
+      for (final s in freshSeries) {
+        loadEpisodesForSeries(s.id);
       }
     }
   }
@@ -242,10 +257,19 @@ class DramaProvider extends ChangeNotifier {
     final list = await ApiService.fetchEpisodesForSeries(seriesId);
     if (list.isNotEmpty) {
       _seriesEpisodes[seriesId] = list;
-    } else if (!_seriesEpisodes.containsKey(seriesId) || _seriesEpisodes[seriesId]!.isEmpty) {
-      _seriesEpisodes[seriesId] = ApiService.getEpisodesForSeries(seriesId, 10);
+      notifyListeners();
     }
-    notifyListeners();
+  }
+
+  void updateEpisodeVideoUrl(String seriesId, String episodeId, String freshVideoUrl) {
+    if (_seriesEpisodes.containsKey(seriesId)) {
+      final list = _seriesEpisodes[seriesId]!;
+      final idx = list.indexWhere((e) => e.id == episodeId);
+      if (idx != -1) {
+        list[idx] = list[idx].copyWith(videoUrl: freshVideoUrl);
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> refreshCatalog() async {
@@ -307,10 +331,25 @@ class DramaProvider extends ChangeNotifier {
     _activeEpisodeNumber = episodeNumber;
     _selectedEpisodeId = 'ep_${seriesId}_$episodeNumber';
     _isPlaying = true;
+
+    // Fast-path: If series has firstEpisode and episodes list is empty, immediately populate it!
     if (!_seriesEpisodes.containsKey(seriesId) || _seriesEpisodes[seriesId]!.isEmpty) {
-      _seriesEpisodes[seriesId] = ApiService.getEpisodesForSeries(seriesId, 10);
+      try {
+        final s = _allSeries.firstWhere((item) => item.id == seriesId);
+        if (s.firstEpisode != null) {
+          _seriesEpisodes[seriesId] = [s.firstEpisode!];
+          VerticalPlayerScreen.prebufferVideoUrl(s.firstEpisode!.playStreamUrl);
+        }
+      } catch (_) {}
+      loadEpisodesForSeries(seriesId);
+    } else {
+      final ep = _seriesEpisodes[seriesId]!.firstWhere(
+        (e) => e.episodeNumber == episodeNumber,
+        orElse: () => _seriesEpisodes[seriesId]!.first,
+      );
+      VerticalPlayerScreen.prebufferVideoUrl(ep.playStreamUrl);
     }
-    loadEpisodesForSeries(seriesId);
+
     navigateTo(AppScreen.player);
   }
 
