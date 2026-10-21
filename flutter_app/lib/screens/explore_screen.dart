@@ -267,7 +267,7 @@ class _ExploreScreenState extends State<ExploreScreen> with WidgetsBindingObserv
       body: PageView.builder(
         controller: _pageController,
         scrollDirection: Axis.vertical,
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics: const PageScrollPhysics(parent: BouncingScrollPhysics()),
         itemCount: allSeries.length,
         onPageChanged: (index) {
           setState(() {

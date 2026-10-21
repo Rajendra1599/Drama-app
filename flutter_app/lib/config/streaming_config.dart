@@ -6,8 +6,8 @@ class StreamingConfig {
   // Feature Flags with instantaneous rollback capability
   static bool enableQoELogs = kDebugMode;
   static bool enableDeferredPrefetch = true;
-  static double prefetchThresholdPercent = 0.75;
-  static int prefetchRemainingSeconds = 60;
+  static double prefetchThresholdPercent = 0.10;
+  static int prefetchRemainingSeconds = 85;
   static bool enablePersistentHttpClient = true;
   static bool enableDiskImageCaching = true;
   static bool enableFastStartMoov = true;

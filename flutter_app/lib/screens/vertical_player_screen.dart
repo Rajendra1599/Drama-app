@@ -40,6 +40,8 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   bool _isRefreshingToken = false;
   int _currentEpisodeNum = 1;
   bool _hasPrefetchedNextEpisode = false;
+  bool _isSwipingPage = false;
+  String? _currentActiveUrl;
 
   // Race-condition prevention & memory management
   int _initSequenceId = 0;
@@ -122,7 +124,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       return;
     }
 
-    if (_currentEpisodeNum != drama.activeEpisodeNumber) {
+    if (!_isSwipingPage && _currentEpisodeNum != drama.activeEpisodeNumber) {
       _stopAndMuteCurrentVideo();
       _currentEpisodeNum = drama.activeEpisodeNumber;
       if (_pageController != null && _pageController!.hasClients) {
@@ -384,6 +386,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
     _loadedEpisodeId = ep.id;
     _failedEpisodeId = null;
+    _hasPrefetchedNextEpisode = false;
     final streamUrl = ep.playStreamUrl;
     ApiService.prewarmCdnConnection(streamUrl);
     _initializePlayer(streamUrl);
@@ -447,16 +450,30 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       final series = drama.selectedSeries;
       if (series == null) return;
       final allEps = drama.getEpisodesForSeries(series.id);
-      final nextIndex = _currentEpisodeNum; // 0-indexed next episode (since _currentEpisodeNum is 1-indexed)
+      
+      // 1. Pre-buffer Next Episode (Instant 0ms on Swipe UP)
+      final nextIndex = _currentEpisodeNum; // 0-indexed next episode
       if (nextIndex < allEps.length) {
         final nextEp = allEps[nextIndex];
         final nextStreamUrl = nextEp.playStreamUrl;
-        // Pre-warm next video connection
         ApiService.prewarmCdnConnection(nextStreamUrl);
         if (kIsWeb) {
           WebVideoInterop.preloadVideo(_optimizeVideoUrl(nextStreamUrl));
         } else {
           prebufferVideoUrl(nextStreamUrl);
+        }
+      }
+
+      // 2. Pre-buffer Previous Episode (Instant 0ms on Swipe DOWN)
+      final prevIndex = _currentEpisodeNum - 2; // 0-indexed previous episode
+      if (prevIndex >= 0 && prevIndex < allEps.length) {
+        final prevEp = allEps[prevIndex];
+        final prevStreamUrl = prevEp.playStreamUrl;
+        ApiService.prewarmCdnConnection(prevStreamUrl);
+        if (kIsWeb) {
+          WebVideoInterop.preloadVideo(_optimizeVideoUrl(prevStreamUrl));
+        } else {
+          prebufferVideoUrl(prevStreamUrl);
         }
       }
     } catch (_) {}
@@ -517,13 +534,26 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       final oldController = _videoController;
       _videoController = activeCtrl;
       if (oldController != null && oldController != activeCtrl) {
-        try {
-          oldController.setVolume(0.0);
-          oldController.pause();
-          oldController.dispose();
-          _allocatedControllers.remove(oldController);
-        } catch (_) {}
+        if (_currentActiveUrl != null) {
+          try {
+            oldController.setVolume(0.0);
+            oldController.pause();
+            oldController.seekTo(Duration.zero);
+            _prebufferedPool[_canonicalUrl(_currentActiveUrl!)] = oldController;
+          } catch (_) {
+            try { oldController.dispose(); } catch (_) {}
+            _allocatedControllers.remove(oldController);
+          }
+        } else {
+          try {
+            oldController.setVolume(0.0);
+            oldController.pause();
+            oldController.dispose();
+            _allocatedControllers.remove(oldController);
+          } catch (_) {}
+        }
       }
+      _currentActiveUrl = trimmedUrl;
 
       try {
         await _videoController?.setVolume(_isMuted ? 0.0 : 1.0);
@@ -605,13 +635,26 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     final previousController = _videoController;
     _videoController = null;
     if (previousController != null) {
-      try {
-        previousController.setVolume(0.0);
-        previousController.pause();
-        previousController.dispose();
-        _allocatedControllers.remove(previousController);
-      } catch (_) {}
+      if (_currentActiveUrl != null) {
+        try {
+          previousController.setVolume(0.0);
+          previousController.pause();
+          previousController.seekTo(Duration.zero);
+          _prebufferedPool[_canonicalUrl(_currentActiveUrl!)] = previousController;
+        } catch (_) {
+          try { previousController.dispose(); } catch (_) {}
+          _allocatedControllers.remove(previousController);
+        }
+      } else {
+        try {
+          previousController.setVolume(0.0);
+          previousController.pause();
+          previousController.dispose();
+          _allocatedControllers.remove(previousController);
+        } catch (_) {}
+      }
     }
+    _currentActiveUrl = trimmedUrl;
 
     try {
       debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=initializing\nhost=${safeUri.host}\npath=${safeUri.path}');
@@ -1220,22 +1263,20 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         backgroundColor: Colors.black,
         body: NotificationListener<ScrollNotification>(
           onNotification: (notification) {
-            // As soon as user starts swiping vertically between episodes, silence current audio immediately
-            if (notification is ScrollStartNotification && notification.dragDetails != null) {
-              _stopAndMuteCurrentVideo();
-            }
             return false;
           },
           child: PageView.builder(
             controller: _pageController,
             scrollDirection: Axis.vertical,
-            physics: const AlwaysScrollableScrollPhysics(),
+            physics: const PageScrollPhysics(parent: BouncingScrollPhysics()),
             itemCount: episodes.length,
             onPageChanged: (index) {
+              _isSwipingPage = true;
               _stopAndMuteCurrentVideo();
               final targetEp = episodes[index];
               _currentEpisodeNum = targetEp.episodeNumber;
               drama.switchEpisode(targetEp.episodeNumber);
+              _isSwipingPage = false;
               final isLocked = drama.isEpisodePaywallLocked(targetEp.episodeNumber, seriesId: series.id);
               if (isLocked) {
                 _pauseForLockedEpisode(targetEp);
