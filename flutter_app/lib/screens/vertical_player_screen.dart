@@ -10,11 +10,16 @@ import '../providers/drama_provider.dart';
 import '../widgets/episodes_sheet.dart';
 import '../services/web_video_interop.dart';
 import '../services/rewarded_ad_manager.dart';
+import '../services/api_service.dart';
 import '../models/drama_series.dart';
 import '../config/theme.dart';
+import '../config/streaming_config.dart';
 
 class VerticalPlayerScreen extends StatefulWidget {
   const VerticalPlayerScreen({super.key});
+
+  /// Pre-buffers video stream in background for zero-latency startup (<300ms)
+  static void prebufferVideoUrl(String rawUrl) => _VerticalPlayerScreenState.prebufferVideoUrl(rawUrl);
 
   @override
   State<VerticalPlayerScreen> createState() => _VerticalPlayerScreenState();
@@ -29,17 +34,20 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   String? _targetLoadingUrl;
   bool _isMuted = false;
   final bool _controlsVisible = true;
-  String? _loadedVideoUrl;
   String? _loadedEpisodeId;
+  String? _failedEpisodeId;
+  String? _playerErrorMessage;
+  bool _isRefreshingToken = false;
   int _currentEpisodeNum = 1;
+  bool _hasPrefetchedNextEpisode = false;
 
   // Race-condition prevention & memory management
   int _initSequenceId = 0;
   final Set<VideoPlayerController> _allocatedControllers = {};
 
-  // Background Pre-Buffering for Instant TikTok/Reels Style Swipe
-  VideoPlayerController? _prebufferedNextController;
-  String? _prebufferedNextUrl;
+  // Global Background Pre-Buffering for Instant TikTok/Reels Style Playback (<300ms)
+  static VideoPlayerController? _prebufferedNextController;
+  static String? _prebufferedNextUrl;
 
   bool _showAnimatedIcon = false;
   bool _lastActionWasPlay = true;
@@ -107,7 +115,11 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _checkAndInitVideo(drama);
+        final ep = drama.currentEpisode;
+        final bool isAlreadyHandled = ep != null && _loadedEpisodeId == ep.id && (_videoController != null || _isConnecting || _failedEpisodeId == ep.id);
+        if (ep != null && !isAlreadyHandled) {
+          _checkAndInitVideo(drama);
+        }
       }
     });
   }
@@ -117,7 +129,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     _isConnecting = false;
     _targetLoadingUrl = null;
     _loadedEpisodeId = null;
-    _loadedVideoUrl = null;
+    _failedEpisodeId = null;
     final c = _videoController;
     _videoController = null;
     _isInitialized = false;
@@ -261,7 +273,6 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     _isConnecting = false;
     _targetLoadingUrl = null;
     _loadedEpisodeId = lockedEp.id; // Mark episode handled so build() does not re-trigger in a loop
-    _loadedVideoUrl = null;
     final c = _videoController;
     _videoController = null;
     _isInitialized = false;
@@ -289,6 +300,20 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     }
   }
 
+  static String _canonicalUrl(String rawUrl) {
+    final trimmed = rawUrl.trim();
+    final qIdx = trimmed.indexOf('?');
+    return qIdx != -1 ? trimmed.substring(0, qIdx) : trimmed;
+  }
+
+  static Uri _buildSafeVideoUri(String rawUrl) {
+    final parsed = Uri.tryParse(rawUrl);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed;
+    }
+    return Uri.parse(Uri.encodeFull(rawUrl));
+  }
+
   void _checkAndInitVideo([DramaProvider? dramaProvider, Episode? targetEpisode]) {
     if (!mounted || _isDisposed) return;
     final drama = dramaProvider ?? Provider.of<DramaProvider>(context, listen: false);
@@ -307,14 +332,18 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       return;
     }
 
-    // Prevent duplicate initializations if already loaded or actively connecting
-    if (_loadedEpisodeId == ep.id && _loadedVideoUrl == ep.videoUrl && (_videoController != null || _isConnecting)) {
+    // Prevent duplicate initializations if already loaded, actively connecting, or failed
+    final bool isSameEp = _loadedEpisodeId == ep.id;
+    final bool isAlreadyHandled = isSameEp && (_videoController != null || _isConnecting || _failedEpisodeId == ep.id);
+    if (isAlreadyHandled) {
       return;
     }
 
     _loadedEpisodeId = ep.id;
-    _loadedVideoUrl = ep.videoUrl;
-    debugPrint('🎬 [PLAYER] Initializing ep #${ep.episodeNumber} (${ep.id}) - URL: ${ep.videoUrl}');
+    _failedEpisodeId = null;
+    debugPrint('🎬 [PLAYER] Initializing ep #${ep.episodeNumber} (${ep.id})');
+    // WORK ITEM 1 & 4: Early CDN connection pre-warming to minimize TLS handshake latency
+    ApiService.prewarmCdnConnection(ep.videoUrl);
     _initializePlayer(ep.videoUrl);
   }
 
@@ -355,9 +384,15 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     return url;
   }
 
-  void _preloadNextController(String rawUrl) async {
+  static void prebufferVideoUrl(String rawUrl) async {
     final nextUrl = _optimizeVideoUrl(rawUrl);
-    if (nextUrl.isEmpty || (_prebufferedNextUrl == nextUrl && _prebufferedNextController != null)) {
+    if (nextUrl.isEmpty) return;
+
+    final canonicalNext = _canonicalUrl(nextUrl);
+    if (_prebufferedNextUrl != null &&
+        _canonicalUrl(_prebufferedNextUrl!) == canonicalNext &&
+        _prebufferedNextController != null &&
+        _prebufferedNextController!.value.isInitialized) {
       return;
     }
 
@@ -367,50 +402,111 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     if (oldPre != null) {
       try {
         oldPre.dispose();
-        _allocatedControllers.remove(oldPre);
       } catch (_) {}
     }
 
     try {
-      debugPrint('🎬 [PLAYER] ⚡ Pre-buffering next episode in background: $nextUrl');
-      final safePreUri = Uri.tryParse(nextUrl) ?? Uri.parse(Uri.encodeFull(nextUrl));
+      final safePreUri = _buildSafeVideoUri(nextUrl);
+      debugPrint('[PLAYER PRELOAD]\nepisode=ep_next\nstate=initializing\nhost=${safePreUri.host}\npath=${safePreUri.path}');
       final preCtrl = VideoPlayerController.networkUrl(
         safePreUri,
+        httpHeaders: const {'Connection': 'keep-alive'},
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
       );
-      _allocatedControllers.add(preCtrl);
       await preCtrl.initialize();
       await preCtrl.setLooping(false);
       await preCtrl.setVolume(0.0);
 
-      if (mounted && !_isDisposed) {
-        _prebufferedNextController = preCtrl;
-        _prebufferedNextUrl = nextUrl;
-        debugPrint('🎬 [PLAYER] ⚡ Next episode successfully pre-buffered and ready for INSTANT playback!');
-      } else {
-        preCtrl.dispose();
-        _allocatedControllers.remove(preCtrl);
-      }
+      _prebufferedNextController = preCtrl;
+      _prebufferedNextUrl = nextUrl;
+      debugPrint('[PLAYER PRELOAD]\nepisode=ep_next\nstate=prebuffered');
     } catch (e) {
-      debugPrint('🎬 [PLAYER] Pre-buffering next episode warning: $e');
+      debugPrint('[PLAYER PRELOAD ERROR]\nepisode=ep_next\nmessage=${e.toString()}');
     }
   }
 
-  Future<void> _initializePlayer(String rawUrl) async {
-    final trimmedUrl = _optimizeVideoUrl(rawUrl);
+  void _triggerDeferredNextPrefetch(DramaProvider drama) {
+    if (!mounted || _isDisposed) return;
+    try {
+      final series = drama.selectedSeries;
+      if (series == null) return;
+      final allEps = drama.getEpisodesForSeries(series.id);
+      final nextIndex = _currentEpisodeNum; // 0-indexed next episode (since _currentEpisodeNum is 1-indexed)
+      if (nextIndex < allEps.length) {
+        final nextEp = allEps[nextIndex];
+        // Pre-warm next video connection
+        ApiService.prewarmCdnConnection(nextEp.videoUrl);
+        if (kIsWeb) {
+          WebVideoInterop.preloadVideo(_optimizeVideoUrl(nextEp.videoUrl));
+        } else {
+          prebufferVideoUrl(nextEp.videoUrl);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _initializePlayer(String rawUrl, {bool isRetryAfter403 = false}) async {
+    var trimmedUrl = _optimizeVideoUrl(rawUrl);
     if (trimmedUrl.isEmpty) {
-      debugPrint('🎬 [PLAYER] URL is empty!');
       return;
     }
 
+    if (_isConnecting && _canonicalUrl(_targetLoadingUrl ?? '') == _canonicalUrl(trimmedUrl)) {
+      return;
+    }
+
+    _isConnecting = true;
+    _targetLoadingUrl = trimmedUrl;
+    final currentSeq = ++_initSequenceId;
+
+    final drama = Provider.of<DramaProvider>(context, listen: false);
+    final ep = drama.currentEpisode;
+
+    // Check if CloudFront video is missing signed URL parameters (Key-Pair-Id, Signature)
+    final bool isCloudFront = trimmedUrl.contains('.cloudfront.net');
+    final bool isMissingSigningParams = isCloudFront && (!trimmedUrl.contains('Key-Pair-Id=') || !trimmedUrl.contains('Signature='));
+    final bool isRelativeS3Key = !trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://');
+
+    if ((isMissingSigningParams || isRelativeS3Key) && ep != null) {
+      if (mounted) {
+        setState(() {
+          _isRefreshingToken = true;
+          _playerErrorMessage = 'Authorizing secure video stream...';
+        });
+      }
+      final playback = await ApiService.fetchPlaybackUrl(
+        ep.id,
+        seriesId: ep.seriesId,
+        episodeNumber: ep.episodeNumber,
+      );
+      if (mounted) {
+        setState(() {
+          _isRefreshingToken = false;
+        });
+      }
+      if (playback != null && playback['videoUrl'] != null) {
+        final freshUrl = playback['videoUrl'].toString();
+        drama.updateEpisodeVideoUrl(ep.seriesId, ep.id, freshUrl);
+        trimmedUrl = _optimizeVideoUrl(freshUrl);
+        _targetLoadingUrl = trimmedUrl;
+      }
+    }
+
+    final safeUri = _buildSafeVideoUri(trimmedUrl);
+    final epNumStr = 'ep_${ep?.episodeNumber ?? _currentEpisodeNum}';
+
     // FAST-PATH: If this video was pre-buffered in the background, use it INSTANTLY (0s delay)!
     if (_prebufferedNextController != null &&
-        _prebufferedNextUrl == trimmedUrl &&
-        _prebufferedNextController!.value.isInitialized) {
-      debugPrint('🎬 [PLAYER] 🚀 INSTANT PLAYBACK TRIGGERED from pre-buffer cache for $trimmedUrl');
+        _canonicalUrl(_prebufferedNextUrl ?? '') == _canonicalUrl(trimmedUrl)) {
       final readyCtrl = _prebufferedNextController!;
       _prebufferedNextController = null;
       _prebufferedNextUrl = null;
+
+      if (!readyCtrl.value.isInitialized) {
+        try {
+          await readyCtrl.initialize();
+        } catch (_) {}
+      }
 
       final oldController = _videoController;
       _videoController = readyCtrl;
@@ -436,38 +532,47 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         await _videoController!.play();
       } catch (_) {}
 
-      // Preload next episode in background
-      try {
-        final drama = Provider.of<DramaProvider>(context, listen: false);
-        final series = drama.selectedSeries;
-        if (series != null) {
-          final allEps = drama.getEpisodesForSeries(series.id);
-          final nextIndex = _currentEpisodeNum; // 0-indexed next
-          if (nextIndex < allEps.length) {
-            if (kIsWeb) {
-              WebVideoInterop.preloadVideo(_optimizeVideoUrl(allEps[nextIndex].videoUrl));
-            } else {
-              _preloadNextController(allEps[nextIndex].videoUrl);
-            }
-          }
-        }
-      } catch (_) {}
+      final durSec = readyCtrl.value.duration.inSeconds;
+      final w = readyCtrl.value.size.width.toInt();
+      final h = readyCtrl.value.size.height.toInt();
+      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=initialized\nduration=${durSec}s\nsize=${w}x$h');
+      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=playing');
+
+      final qoeMetrics = StreamingConfig.getMetrics(ep?.id ?? epNumStr);
+      qoeMetrics.markFirstFrameRendered();
 
       int lastRecordedSec = -1;
-      final currentSeq = ++_initSequenceId;
       readyCtrl.addListener(() {
         if (!mounted || _videoController != readyCtrl || currentSeq != _initSequenceId) return;
         final pos = readyCtrl.value.position.inSeconds;
         final dur = readyCtrl.value.duration.inSeconds;
+
+        // QoE Buffer Stall Tracking
+        if (readyCtrl.value.isBuffering) {
+          qoeMetrics.markRebufferStart();
+        } else {
+          qoeMetrics.markRebufferEnd();
+        }
+
+        // WORK ITEM 3: Next-episode deferred prefetch at 75% watched or last 60s
+        if (dur > 0 && !_hasPrefetchedNextEpisode && StreamingConfig.enableDeferredPrefetch) {
+          final double progress = pos / dur;
+          final int remainingSec = dur - pos;
+          if (progress >= StreamingConfig.prefetchThresholdPercent ||
+              remainingSec <= StreamingConfig.prefetchRemainingSeconds) {
+            _hasPrefetchedNextEpisode = true;
+            _triggerDeferredNextPrefetch(drama);
+          }
+        }
+
         if (dur > 0 && (pos - lastRecordedSec).abs() >= 2) {
           lastRecordedSec = pos;
-          final drama = Provider.of<DramaProvider>(context, listen: false);
           final sId = drama.selectedSeriesId;
-          final ep = drama.currentEpisode;
-          if (sId != null && ep != null) {
+          final curEp = drama.currentEpisode;
+          if (sId != null && curEp != null) {
             drama.recordWatchProgress(
               seriesId: sId,
-              episodeId: ep.id,
+              episodeId: curEp.id,
               progressSeconds: pos,
               totalSeconds: dur,
             );
@@ -481,49 +586,18 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       return;
     }
 
-    if (_isConnecting && _targetLoadingUrl == trimmedUrl) {
-      debugPrint('🎬 [PLAYER] Already connecting to $trimmedUrl - skipping duplicate call');
-      return;
-    }
-
-    _isConnecting = true;
-    _targetLoadingUrl = trimmedUrl;
-    final currentSeq = ++_initSequenceId;
-
-    // Dispose old controller
-    final oldController = _videoController;
-    _videoController = null;
     if (mounted) {
       setState(() {
         _isInitialized = false;
       });
     }
-    if (oldController != null) {
-      try {
-        await oldController.pause();
-        await oldController.setVolume(0.0);
-        await oldController.dispose();
-        _allocatedControllers.remove(oldController);
-      } catch (e) {
-        debugPrint('🎬 [PLAYER] Error disposing old controller: $e');
-      }
-    }
-
-    // Ensure all other previous controllers are paused & purged
-    for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
-      try {
-        ctrl.pause();
-        ctrl.setVolume(0.0);
-        ctrl.dispose();
-      } catch (_) {}
-    }
-    _allocatedControllers.clear();
 
     try {
-      debugPrint('🎬 [PLAYER] (Seq #$currentSeq) Connecting to fast stream: $trimmedUrl');
-      final safeUri = Uri.tryParse(trimmedUrl) ?? Uri.parse(Uri.encodeFull(trimmedUrl));
+      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=initializing\nhost=${safeUri.host}\npath=${safeUri.path}');
+
       final controller = VideoPlayerController.networkUrl(
         safeUri,
+        httpHeaders: const {'Connection': 'keep-alive'},
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
       );
       _allocatedControllers.add(controller);
@@ -532,22 +606,18 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
       // Check if stale or user navigated away during async buffer
       if (!mounted || currentSeq != _initSequenceId) {
-        debugPrint('🎬 [PLAYER] Aborting stale init #$currentSeq (latest is #$_initSequenceId)');
         try {
           await controller.pause();
           await controller.setVolume(0.0);
           await controller.dispose();
           _allocatedControllers.remove(controller);
         } catch (_) {}
-        // Do NOT call pauseAllWebVideos here, as it would destroy the next episode that started!
         _isConnecting = false;
         _targetLoadingUrl = null;
         return;
       }
 
-      final drama = Provider.of<DramaProvider>(context, listen: false);
       if (drama.currentScreen != AppScreen.player) {
-        debugPrint('🎬 [PLAYER] Screen is not player, disposing controller');
         try {
           await controller.pause();
           await controller.setVolume(0.0);
@@ -560,7 +630,27 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         return;
       }
 
+      final oldController = _videoController;
       _videoController = controller;
+      if (oldController != null && oldController != controller) {
+        try {
+          await oldController.pause();
+          await oldController.dispose();
+          _allocatedControllers.remove(oldController);
+        } catch (_) {}
+      }
+
+      // Purge any lingering orphaned controllers
+      for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
+        if (ctrl != _videoController && ctrl != _prebufferedNextController) {
+          try {
+            ctrl.pause();
+            ctrl.dispose();
+            _allocatedControllers.remove(ctrl);
+          } catch (_) {}
+        }
+      }
+
       await controller.setLooping(false); // Do not loop: auto-advance or show ad
       await controller.setVolume(_isMuted ? 0.0 : 1.0);
 
@@ -576,49 +666,58 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       try {
         await controller.play();
       } catch (err) {
-        debugPrint('🎬 [PLAYER] Web Autoplay policy fallback: $err');
         try {
           await controller.setVolume(0.0);
           await controller.play();
         } catch (_) {}
       }
 
-      debugPrint('🎬 [PLAYER] Playing! Size: ${controller.value.size}, Duration: ${controller.value.duration}');
+      final durSec = controller.value.duration.inSeconds;
+      final w = controller.value.size.width.toInt();
+      final h = controller.value.size.height.toInt();
+      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=initialized\nduration=${durSec}s\nsize=${w}x$h');
+      debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=playing');
+
+      final qoeMetrics = StreamingConfig.getMetrics(ep?.id ?? epNumStr);
+      qoeMetrics.markManifestLoaded();
+      qoeMetrics.markFirstFrameRendered();
 
       if (kIsWeb) {
         WebVideoInterop.optimizeWebVideos();
       }
-
-      // Preload next episode in background for instant swipe
-      try {
-        final series = drama.selectedSeries;
-        if (series != null) {
-          final allEps = drama.getEpisodesForSeries(series.id);
-          final nextIndex = _currentEpisodeNum; // Next episode is at index _currentEpisodeNum
-          if (nextIndex < allEps.length) {
-            if (kIsWeb) {
-              WebVideoInterop.preloadVideo(_optimizeVideoUrl(allEps[nextIndex].videoUrl));
-            } else {
-              _preloadNextController(allEps[nextIndex].videoUrl);
-            }
-          }
-        }
-      } catch (_) {}
 
       int lastRecordedSec = -1;
       controller.addListener(() {
         if (!mounted || _videoController != controller || currentSeq != _initSequenceId) return;
         final pos = controller.value.position.inSeconds;
         final dur = controller.value.duration.inSeconds;
+
+        // QoE Buffer Stall Tracking
+        if (controller.value.isBuffering) {
+          qoeMetrics.markRebufferStart();
+        } else {
+          qoeMetrics.markRebufferEnd();
+        }
+
+        // WORK ITEM 3: Next-episode deferred prefetch at 75% watched or last 60s
+        if (dur > 0 && !_hasPrefetchedNextEpisode && StreamingConfig.enableDeferredPrefetch) {
+          final double progress = pos / dur;
+          final int remainingSec = dur - pos;
+          if (progress >= StreamingConfig.prefetchThresholdPercent ||
+              remainingSec <= StreamingConfig.prefetchRemainingSeconds) {
+            _hasPrefetchedNextEpisode = true;
+            _triggerDeferredNextPrefetch(drama);
+          }
+        }
+
         if (dur > 0 && (pos - lastRecordedSec).abs() >= 2) {
           lastRecordedSec = pos;
-          final drama = Provider.of<DramaProvider>(context, listen: false);
           final sId = drama.selectedSeriesId;
-          final ep = drama.currentEpisode;
-          if (sId != null && ep != null) {
+          final curEp = drama.currentEpisode;
+          if (sId != null && curEp != null) {
             drama.recordWatchProgress(
               seriesId: sId,
-              episodeId: ep.id,
+              episodeId: curEp.id,
               progressSeconds: pos,
               totalSeconds: dur,
             );
@@ -631,13 +730,96 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         }
       });
     } catch (e) {
-      debugPrint('🎬 [PLAYER] Video init error: $e');
       _isConnecting = false;
       _targetLoadingUrl = null;
-      const fallbackUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-      if (trimmedUrl != fallbackUrl && mounted && currentSeq == _initSequenceId) {
-        debugPrint('🎬 [PLAYER] Retrying with reliable fallback video stream...');
-        _initializePlayer(fallbackUrl);
+
+      final errStr = e.toString().toLowerCase();
+      final bool is403 = errStr.contains('403') ||
+          errStr.contains('forbidden') ||
+          errStr.contains('response code: 403');
+
+      String errorType = 'UNKNOWN';
+      int errorStatus = 0;
+      String errorSummary = 'Playback error';
+
+      if (is403) {
+        errorType = 'HTTP';
+        errorStatus = 403;
+        errorSummary = 'Signed URL / CloudFront authentication problem (403)';
+      } else if (errStr.contains('404')) {
+        errorType = 'HTTP';
+        errorStatus = 404;
+        errorSummary = 'S3 object key not found on CDN (404)';
+      } else if (errStr.contains('416')) {
+        errorType = 'HTTP';
+        errorStatus = 416;
+        errorSummary = 'Byte-range request problem (416)';
+      } else if (errStr.contains('500') || errStr.contains('502') || errStr.contains('503') || errStr.contains('504')) {
+        errorType = 'HTTP';
+        errorStatus = 500;
+        errorSummary = 'CloudFront / S3 origin problem (5xx)';
+      } else if (errStr.contains('parserexception') || errStr.contains('extractor')) {
+        errorType = 'PARSER';
+        errorStatus = 0;
+        errorSummary = 'MP4 container / moov atom format problem';
+      } else if (errStr.contains('decoderexception') || errStr.contains('mediacodec')) {
+        errorType = 'DECODER';
+        errorStatus = 0;
+        errorSummary = 'Codec or hardware device compatibility problem';
+      } else if (errStr.contains('timeout') || errStr.contains('socketexception') || errStr.contains('connection')) {
+        errorType = 'NETWORK';
+        errorStatus = 0;
+        errorSummary = 'Network connection timeout / disconnected';
+      }
+
+      debugPrint('[PLAYER ERROR]\nepisode=$epNumStr\ntype=$errorType\nstatus=$errorStatus\nmessage=$errorSummary');
+
+      // If HTTP 403 (token expired or rejected by CloudFront) and haven't retried yet:
+      if (is403 && !isRetryAfter403 && ep != null && mounted) {
+        setState(() {
+          _isRefreshingToken = true;
+          _playerErrorMessage = 'Video access expired. Refreshing stream...';
+        });
+
+        final playback = await ApiService.fetchPlaybackUrl(
+          ep.id,
+          seriesId: ep.seriesId,
+          episodeNumber: ep.episodeNumber,
+        );
+
+        if (mounted) {
+          setState(() {
+            _isRefreshingToken = false;
+          });
+        }
+
+        if (playback != null && playback['videoUrl'] != null && mounted) {
+          final freshUrl = playback['videoUrl'].toString();
+          drama.updateEpisodeVideoUrl(ep.seriesId, ep.id, freshUrl);
+          _playerErrorMessage = null;
+          // Reinitialize player once with fresh signed URL
+          return _initializePlayer(freshUrl, isRetryAfter403: true);
+        }
+      }
+
+      // Categorize error for accurate, professional UI feedback
+      _failedEpisodeId = _loadedEpisodeId;
+      if (is403) {
+        _playerErrorMessage = 'Video access expired. Please tap Retry to refresh credentials.';
+      } else if (errStr.contains('404')) {
+        _playerErrorMessage = 'Video file not found on CDN (404).';
+      } else if (errStr.contains('500') || errStr.contains('502') || errStr.contains('503') || errStr.contains('504')) {
+        _playerErrorMessage = 'CDN server temporarily unavailable (5xx).';
+      } else if (errStr.contains('timeoutexception') || errStr.contains('socketexception') || errStr.contains('connection')) {
+        _playerErrorMessage = 'Network connection issue. Please check your internet connection.';
+      } else {
+        _playerErrorMessage = 'Playback error. Tap to retry.';
+      }
+
+      if (mounted && currentSeq == _initSequenceId) {
+        setState(() {
+          _isInitialized = false;
+        });
       }
     }
   }
@@ -657,6 +839,10 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
           curve: Curves.easeInOut,
         );
       }
+    } else {
+      // Last episode of the series: smoothly loop without tearing down the hardware codec surface
+      _videoController?.seekTo(Duration.zero);
+      _videoController?.play();
     }
   }
 
@@ -668,7 +854,12 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     var target = current + delta;
     if (target < Duration.zero) target = Duration.zero;
     if (target > total) target = total;
-    controller.seekTo(target);
+
+    final epId = _loadedEpisodeId ?? 'ep_$_currentEpisodeNum';
+    StreamingConfig.getMetrics(epId).markSeekStart();
+    controller.seekTo(target).then((_) {
+      StreamingConfig.getMetrics(epId).markSeekRendered();
+    });
 
     _seekAnimationTimer?.cancel();
     if (delta.isNegative) {
@@ -899,7 +1090,8 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     final isLocked = series != null && ep != null ? drama.isEpisodePaywallLocked(ep.episodeNumber) : false;
     final isUnlocked = !isLocked;
 
-    if (ep != null && isUnlocked && (_loadedEpisodeId != ep.id || _loadedVideoUrl != ep.videoUrl || (_videoController == null && !_isConnecting))) {
+    final bool isAlreadyHandled = ep != null && _loadedEpisodeId == ep.id && (_videoController != null || _isConnecting || _failedEpisodeId == ep.id);
+    if (ep != null && isUnlocked && !isAlreadyHandled) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_isDisposed) {
           _checkAndInitVideo(drama, ep);
@@ -1031,14 +1223,20 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
             final isLocked = drama.isEpisodePaywallLocked(ep.episodeNumber, seriesId: series.id);
             final isUnlocked = !isLocked;
 
+            final String posterImage = ep.thumbnailUrl.isNotEmpty
+                ? ep.thumbnailUrl
+                : (series.coverImageUrl.isNotEmpty
+                    ? series.coverImageUrl
+                    : (series.posterUrl.isNotEmpty ? series.posterUrl : ''));
+
             return Stack(
               fit: StackFit.expand,
               children: [
                 // 1. Instant Poster Thumbnail Background (Prevents black blank screen)
-                if (ep.thumbnailUrl.isNotEmpty)
+                if (posterImage.isNotEmpty)
                   Positioned.fill(
                     child: CachedNetworkImage(
-                      imageUrl: ep.thumbnailUrl,
+                      imageUrl: posterImage,
                       fit: BoxFit.cover,
                       placeholder: (_, __) => Container(color: const Color(0xFF0D0D12)),
                       errorWidget: (_, __, ___) => Container(color: const Color(0xFF0D0D12)),
@@ -1067,7 +1265,55 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
                     child: Center(
                       child: isLocked
                           ? const SizedBox.shrink()
-                          : const CircularProgressIndicator(color: AppTheme.storyTvPink),
+                          : _isRefreshingToken
+                              ? Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const CircularProgressIndicator(color: AppTheme.storyTvPink),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      _playerErrorMessage ?? 'Refreshing video stream...',
+                                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                    ),
+                                  ],
+                                )
+                              : (_failedEpisodeId == ep.id)
+                                  ? Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          _playerErrorMessage?.contains('expired') == true
+                                              ? Icons.access_time_rounded
+                                              : Icons.error_outline_rounded,
+                                          color: Colors.white70,
+                                          size: 40,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                                          child: Text(
+                                            _playerErrorMessage ?? 'Playback error. Tap to retry',
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        ElevatedButton.icon(
+                                          onPressed: () {
+                                            _failedEpisodeId = null;
+                                            _playerErrorMessage = null;
+                                            _checkAndInitVideo(drama, ep);
+                                          },
+                                          icon: const Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
+                                          label: const Text('Retry', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: AppTheme.storyTvPink,
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : const CircularProgressIndicator(color: AppTheme.storyTvPink),
                     ),
                   ),
 

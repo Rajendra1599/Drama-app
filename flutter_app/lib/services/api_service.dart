@@ -2,19 +2,44 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
+import '../config/streaming_config.dart';
 import '../models/drama_series.dart';
 import '../models/episode.dart';
 import '../models/user_subscription.dart';
 import 'local_storage_service.dart';
 
 class ApiService {
+  // WORK ITEM 4: Reusable HTTP connection pool with HTTP/1.1 & HTTP/2 keep-alive
+  static final http.Client _sharedClient = http.Client();
+  static http.Client get _client => StreamingConfig.enablePersistentHttpClient ? _sharedClient : http.Client();
+
+  // In-memory catalog cache with 60-second TTL
+  static List<DramaSeries>? _memoryCatalogCache;
+  static int _catalogCacheTimestamp = 0;
+
+  // In-memory episodes cache by seriesId with 60-second TTL
+  static final Map<String, List<Episode>> _memoryEpisodesCache = {};
+  static final Map<String, int> _episodesCacheTimestamp = {};
+
   static Map<String, String> get _headers {
     final token = LocalStorageService.token;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'Connection': 'keep-alive',
       if (token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
+  }
+
+  /// WORK ITEM 1 & 4: Early CDN connection pre-warming to eliminate TCP+TLS handshake latency
+  static void prewarmCdnConnection(String videoUrl) {
+    if (videoUrl.isEmpty) return;
+    try {
+      final uri = Uri.parse(videoUrl);
+      if (uri.host.isNotEmpty) {
+        _client.head(uri, headers: {'Connection': 'keep-alive', 'Range': 'bytes=0-0'}).catchError((_) => http.Response('', 499));
+      }
+    } catch (_) {}
   }
 
   // ===========================================================================
@@ -27,20 +52,45 @@ class ApiService {
     String genre = '',
     String sort = 'trending',
   }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_memoryCatalogCache != null && (now - _catalogCacheTimestamp) < 60000 && page == 1 && genre.isEmpty) {
+      return _memoryCatalogCache!;
+    }
+
     try {
       final uri = Uri.parse('${ApiConfig.dramas}?page=$page&limit=$limit&genre=$genre&sort=$sort');
-      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
+      final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         await LocalStorageService.setCachedCatalog(res.body);
         final data = jsonDecode(res.body);
         final list = (data['series'] as List?) ?? [];
-        return list.map((item) => DramaSeries.fromJson(item)).toList();
+        final parsed = list.map((item) => DramaSeries.fromJson(item)).toList();
+        if (page == 1 && genre.isEmpty) {
+          _memoryCatalogCache = parsed;
+          _catalogCacheTimestamp = DateTime.now().millisecondsSinceEpoch;
+        }
+        return parsed;
       }
     } catch (e) {
       debugPrint('[ApiService] fetchCatalog primary error: $e');
     }
 
-    // Fallback to live server if local was unreachable
+    // Fallback 1: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
+    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
+      try {
+        final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/dramas?page=$page&limit=$limit&genre=$genre&sort=$sort');
+        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 3));
+        if (res.statusCode == 200) {
+          ApiConfig.useLan();
+          await LocalStorageService.setCachedCatalog(res.body);
+          final data = jsonDecode(res.body);
+          final list = (data['series'] as List?) ?? [];
+          return list.map((item) => DramaSeries.fromJson(item)).toList();
+        }
+      } catch (_) {}
+    }
+
+    // Fallback 2: Try live server
     if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
       try {
         final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas?page=$page&limit=$limit&genre=$genre&sort=$sort');
@@ -102,34 +152,66 @@ class ApiService {
   }
 
   static Future<List<Episode>> fetchEpisodesForSeries(String seriesId) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final cachedTime = _episodesCacheTimestamp[seriesId] ?? 0;
+    if (_memoryEpisodesCache.containsKey(seriesId) && (now - cachedTime) < 60000) {
+      return _memoryEpisodesCache[seriesId]!;
+    }
+
     try {
       final uri = Uri.parse(ApiConfig.dramaEpisodes(seriesId));
-      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
+      final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final list = (data['episodes'] as List?) ?? [];
         if (list.isNotEmpty) {
-          return list.map((item) => Episode.fromJson(item)).toList();
+          final parsed = list.map((item) => Episode.fromJson(item)).toList();
+          _memoryEpisodesCache[seriesId] = parsed;
+          _episodesCacheTimestamp[seriesId] = DateTime.now().millisecondsSinceEpoch;
+          return parsed;
         }
       }
     } catch (e) {
       debugPrint('[ApiService] fetchEpisodesForSeries primary error: $e');
     }
 
-    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
+    // Fallback 1: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
+    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
       try {
-        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas/$seriesId/episodes');
-        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+        final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/dramas/$seriesId/episodes');
+        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 3));
         if (res.statusCode == 200) {
+          ApiConfig.useLan();
           final data = jsonDecode(res.body);
           final list = (data['episodes'] as List?) ?? [];
           if (list.isNotEmpty) {
-            return list.map((item) => Episode.fromJson(item)).toList();
+            final parsed = list.map((item) => Episode.fromJson(item)).toList();
+            _memoryEpisodesCache[seriesId] = parsed;
+            _episodesCacheTimestamp[seriesId] = DateTime.now().millisecondsSinceEpoch;
+            return parsed;
           }
         }
       } catch (_) {}
     }
-    return getEpisodesForSeries(seriesId, 10);
+
+    // Fallback 2: Try live server
+    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
+      try {
+        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas/$seriesId/episodes');
+        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          final list = (data['episodes'] as List?) ?? [];
+          if (list.isNotEmpty) {
+            final parsed = list.map((item) => Episode.fromJson(item)).toList();
+            _memoryEpisodesCache[seriesId] = parsed;
+            _episodesCacheTimestamp[seriesId] = DateTime.now().millisecondsSinceEpoch;
+            return parsed;
+          }
+        }
+      } catch (_) {}
+    }
+    return [];
   }
 
   // ===========================================================================
@@ -165,11 +247,67 @@ class ApiService {
       'authorized': isFree,
       'reason': isFree ? 'FREE_EPISODE' : 'VIP_MEMBERSHIP_REQUIRED',
       'episodeNumber': episodeNumber,
-      'streamUrl': isFree
-          ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-          : '',
+      'streamUrl': '',
       'hlsDelivery': false,
     };
+  }
+
+  /// Dedicated playback URL fetcher for protected CloudFront/S3 video content.
+  /// Obtains a fresh cryptographically signed URL containing Expires, Signature, Key-Pair-Id.
+  static Future<Map<String, dynamic>?> fetchPlaybackUrl(
+    String episodeId, {
+    String? seriesId,
+    int? episodeNumber,
+  }) async {
+    final query = <String>[];
+    if (seriesId != null && seriesId.isNotEmpty) query.add('seriesId=$seriesId');
+    if (episodeNumber != null) query.add('episodeNumber=$episodeNumber');
+    final qs = query.isNotEmpty ? '?${query.join('&')}' : '';
+
+    try {
+      final uri = Uri.parse('${ApiConfig.episodePlayback(episodeId)}$qs');
+      final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true && data['videoUrl'] != null) {
+          return data;
+        }
+      }
+    } catch (e) {
+      debugPrint('[ApiService] fetchPlaybackUrl primary error: $e');
+    }
+
+    // Fallback 1: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
+    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
+      try {
+        final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/episodes/$episodeId/playback$qs');
+        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 3));
+        if (res.statusCode == 200) {
+          ApiConfig.useLan();
+          final data = jsonDecode(res.body);
+          if (data['success'] == true && data['videoUrl'] != null) {
+            return data;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fallback 2: Try live server
+    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
+      try {
+        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/episodes/$episodeId/playback$qs');
+        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 6));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          if (data['success'] == true && data['videoUrl'] != null) {
+            return data;
+          }
+        }
+      } catch (e) {
+        debugPrint('[ApiService] fetchPlaybackUrl fallback error: $e');
+      }
+    }
+    return null;
   }
 
   static Future<void> recordView({
@@ -178,7 +316,7 @@ class ApiService {
     required String userId,
   }) async {
     try {
-      await http.post(
+      _client.post(
         Uri.parse(ApiConfig.viewEpisode),
         headers: _headers,
         body: jsonEncode({

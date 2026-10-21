@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/drama_series.dart';
 import '../config/theme.dart';
 
@@ -165,22 +166,17 @@ class _HeroSliderState extends State<HeroSlider> with AutomaticKeepAliveClientMi
             fit: StackFit.expand,
             children: [
               // 1. Poster Image
-              Image.network(
-                _resolveBannerUrl(series),
+              CachedNetworkImage(
+                imageUrl: _resolveBannerUrl(series),
                 fit: BoxFit.cover,
-                gaplessPlayback: true,
-                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                  if (wasSynchronouslyLoaded || frame != null) {
-                    return child;
-                  }
-                  return Container(
-                    color: AppTheme.dramaDarkSurface,
-                    child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.storyTvPink),
-                    ),
-                  );
-                },
-                errorBuilder: (_, __, ___) => _buildFallbackBanner(series),
+                memCacheWidth: 720,
+                placeholder: (_, __) => Container(
+                  color: AppTheme.dramaDarkSurface,
+                  child: const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.storyTvPink),
+                  ),
+                ),
+                errorWidget: (_, __, ___) => _buildFallbackBanner(series),
               ),
 
               // 2. Dark Vignette Gradient

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/drama_series.dart';
 import '../config/theme.dart';
 
@@ -203,15 +204,12 @@ class PureStoryThumbnailCard extends StatelessWidget {
   Widget _buildPosterImage() {
     final url = _resolveImageUrl(series);
     if (url.isNotEmpty) {
-      return Image.network(
-        url,
+      return CachedNetworkImage(
+        imageUrl: url,
         fit: BoxFit.cover,
-        gaplessPlayback: true,
-        frameBuilder: (context, child, frame, wasSync) {
-          if (wasSync || frame != null) return child;
-          return _buildPlaceholder();
-        },
-        errorBuilder: (_, __, ___) => _buildFallback(),
+        memCacheWidth: 360,
+        placeholder: (_, __) => _buildPlaceholder(),
+        errorWidget: (_, __, ___) => _buildFallback(),
       );
     }
     return _buildFallback();
@@ -427,15 +425,12 @@ class Top10StoryCard extends StatelessWidget {
   Widget _buildPosterImage() {
     final url = _resolveImageUrl(series);
     if (url.isNotEmpty) {
-      return Image.network(
-        url,
+      return CachedNetworkImage(
+        imageUrl: url,
         fit: BoxFit.cover,
-        gaplessPlayback: true,
-        frameBuilder: (context, child, frame, wasSync) {
-          if (wasSync || frame != null) return child;
-          return Container(color: const Color(0xFF1A1A24));
-        },
-        errorBuilder: (_, __, ___) => _buildFallback(),
+        memCacheWidth: 360,
+        placeholder: (_, __) => Container(color: const Color(0xFF1A1A24)),
+        errorWidget: (_, __, ___) => _buildFallback(),
       );
     }
     return _buildFallback();
