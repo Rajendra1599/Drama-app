@@ -1,27 +1,24 @@
-import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 class ApiConfig {
-  // Live Production Hosted URL
-  static const String liveBaseUrl = 'https://updated-story-up.onrender.com';
   // Fast Local USB / Localhost Backend (mapped via adb reverse tcp:5000 tcp:5000)
   static const String localBaseUrl = 'http://127.0.0.1:5000';
-  // Fast Local Wi-Fi / LAN IP (works directly without USB/adb reverse)
+  // Fast Local Wi-Fi / LAN IP (works directly over Wi-Fi without USB/adb reverse)
   static const String lanBaseUrl = 'http://192.168.1.33:5000';
 
   static String _overrideBaseUrl = '';
-  // Default to liveBaseUrl for real mobile devices so standalone app on 4G/Wi-Fi works immediately
-  static String _activeBaseUrl = liveBaseUrl;
+  // Default 100% to local USB backend
+  static String _activeBaseUrl = localBaseUrl;
   static bool _hasProbed = false;
 
   static String get baseUrl {
     if (_overrideBaseUrl.isNotEmpty) return _overrideBaseUrl;
-    if (kIsWeb) return localBaseUrl;
     return _activeBaseUrl;
   }
 
   static Future<void> autoDetectBackend() async {
-    if (_hasProbed || kIsWeb) return;
+    if (_hasProbed) return;
     _hasProbed = true;
 
     // 1. Probe Localhost via USB ADB reverse (300ms)
@@ -29,28 +26,24 @@ class ApiConfig {
       final res = await http.get(Uri.parse('$localBaseUrl/health/live')).timeout(const Duration(milliseconds: 300));
       if (res.statusCode == 200) {
         _activeBaseUrl = localBaseUrl;
-        debugPrint('⚡ [ApiConfig] Localhost USB backend connected (0ms)');
+        debugPrint('⚡ [ApiConfig] Localhost USB backend connected: $localBaseUrl');
         return;
       }
     } catch (_) {}
 
-    // 2. Probe LAN IP over local Wi-Fi (400ms)
+    // 2. Probe LAN IP over local Wi-Fi (works even without USB cable)
     try {
       final res = await http.get(Uri.parse('$lanBaseUrl/health/live')).timeout(const Duration(milliseconds: 400));
       if (res.statusCode == 200) {
         _activeBaseUrl = lanBaseUrl;
-        debugPrint('⚡ [ApiConfig] Local Wi-Fi LAN backend connected ($lanBaseUrl)');
+        debugPrint('⚡ [ApiConfig] Local Wi-Fi LAN backend connected: $lanBaseUrl');
         return;
       }
     } catch (_) {}
 
-    // 3. Fallback to live production hosted backend
-    _activeBaseUrl = liveBaseUrl;
-    debugPrint('🌐 [ApiConfig] Live production backend active ($liveBaseUrl)');
-  }
-
-  static void useLive() {
-    _overrideBaseUrl = liveBaseUrl;
+    // Default to localBaseUrl
+    _activeBaseUrl = localBaseUrl;
+    debugPrint('⚡ [ApiConfig] Using local backend: $localBaseUrl');
   }
 
   static void useLocal() {

@@ -93,11 +93,11 @@ class ApiService {
       } catch (_) {}
     }
 
-    // Fallback 2: Try live server
-    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
+    // Fallback: Try Local LAN IP
+    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
       try {
-        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas?page=$page&limit=$limit&genre=$genre&sort=$sort');
-        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+        final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/dramas?page=$page&limit=$limit&genre=$genre&sort=$sort');
+        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 3));
         if (res.statusCode == 200) {
           await LocalStorageService.setCachedCatalog(res.body);
           final data = jsonDecode(res.body);
@@ -105,7 +105,7 @@ class ApiService {
           return list.map((item) => DramaSeries.fromJson(item)).toList();
         }
       } catch (e) {
-        debugPrint('[ApiService] fetchCatalog fallback error: $e');
+        debugPrint('[ApiService] fetchCatalog LAN error: $e');
       }
     }
 
@@ -181,31 +181,13 @@ class ApiService {
       }
     }
 
-    // Fallback 1: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
-    if (ApiConfig.baseUrl == ApiConfig.lanBaseUrl) {
+    // Fallback: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
+    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
       try {
         final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/dramas/$seriesId/episodes');
-        final res = await _client.get(uri, headers: _headers).timeout(const Duration(milliseconds: 2000));
+        final res = await _client.get(uri, headers: _headers).timeout(const Duration(milliseconds: 2500));
         if (res.statusCode == 200) {
           ApiConfig.useLan();
-          final data = jsonDecode(res.body);
-          final list = (data['episodes'] as List?) ?? [];
-          if (list.isNotEmpty) {
-            final parsed = list.map((item) => Episode.fromJson(item)).toList();
-            _memoryEpisodesCache[seriesId] = parsed;
-            _episodesCacheTimestamp[seriesId] = DateTime.now().millisecondsSinceEpoch;
-            return parsed;
-          }
-        }
-      } catch (_) {}
-    }
-
-    // Fallback 2: Try live server
-    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
-      try {
-        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/dramas/$seriesId/episodes');
-        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
-        if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           final list = (data['episodes'] as List?) ?? [];
           if (list.isNotEmpty) {
@@ -298,21 +280,6 @@ class ApiService {
       } catch (_) {}
     }
 
-    // Fallback 2: Try live server
-    if (ApiConfig.baseUrl != ApiConfig.liveBaseUrl) {
-      try {
-        final uri = Uri.parse('${ApiConfig.liveBaseUrl}/api/episodes/$episodeId/playback$qs');
-        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 6));
-        if (res.statusCode == 200) {
-          final data = jsonDecode(res.body);
-          if (data['success'] == true && data['videoUrl'] != null) {
-            return data;
-          }
-        }
-      } catch (e) {
-        debugPrint('[ApiService] fetchPlaybackUrl fallback error: $e');
-      }
-    }
     return null;
   }
 
