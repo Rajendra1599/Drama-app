@@ -59,7 +59,7 @@ class ApiService {
 
     try {
       final uri = Uri.parse('${ApiConfig.dramas}?page=$page&limit=$limit&genre=$genre&sort=$sort');
-      final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
+      final res = await _client.get(uri, headers: _headers).timeout(const Duration(milliseconds: 1500));
       if (res.statusCode == 200) {
         await LocalStorageService.setCachedCatalog(res.body);
         final data = jsonDecode(res.body);
@@ -73,13 +73,16 @@ class ApiService {
       }
     } catch (e) {
       debugPrint('[ApiService] fetchCatalog primary error: $e');
+      if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
+        ApiConfig.useLan();
+      }
     }
 
     // Fallback 1: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
-    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
+    if (ApiConfig.baseUrl == ApiConfig.lanBaseUrl) {
       try {
         final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/dramas?page=$page&limit=$limit&genre=$genre&sort=$sort');
-        final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 3));
+        final res = await http.get(uri, headers: _headers).timeout(const Duration(milliseconds: 2000));
         if (res.statusCode == 200) {
           ApiConfig.useLan();
           await LocalStorageService.setCachedCatalog(res.body);
@@ -160,7 +163,7 @@ class ApiService {
 
     try {
       final uri = Uri.parse(ApiConfig.dramaEpisodes(seriesId));
-      final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 4));
+      final res = await _client.get(uri, headers: _headers).timeout(const Duration(milliseconds: 1500));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final list = (data['episodes'] as List?) ?? [];
@@ -173,13 +176,16 @@ class ApiService {
       }
     } catch (e) {
       debugPrint('[ApiService] fetchEpisodesForSeries primary error: $e');
+      if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
+        ApiConfig.useLan();
+      }
     }
 
     // Fallback 1: Try Local Wi-Fi / LAN IP (works seamlessly even if USB disconnected)
-    if (ApiConfig.baseUrl != ApiConfig.lanBaseUrl) {
+    if (ApiConfig.baseUrl == ApiConfig.lanBaseUrl) {
       try {
         final uri = Uri.parse('${ApiConfig.lanBaseUrl}/api/dramas/$seriesId/episodes');
-        final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 3));
+        final res = await _client.get(uri, headers: _headers).timeout(const Duration(milliseconds: 2000));
         if (res.statusCode == 200) {
           ApiConfig.useLan();
           final data = jsonDecode(res.body);

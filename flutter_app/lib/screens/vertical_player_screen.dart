@@ -92,6 +92,27 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     }
   }
 
+  void _stopAndMuteCurrentVideo() {
+    final c = _videoController;
+    if (c != null) {
+      try {
+        c.setVolume(0.0);
+        c.pause();
+      } catch (_) {}
+    }
+    for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
+      if (ctrl != _prebufferedNextController) {
+        try {
+          ctrl.setVolume(0.0);
+          ctrl.pause();
+        } catch (_) {}
+      }
+    }
+    if (kIsWeb) {
+      WebVideoInterop.pauseAllWebVideos();
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -102,6 +123,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     }
 
     if (_currentEpisodeNum != drama.activeEpisodeNumber) {
+      _stopAndMuteCurrentVideo();
       _currentEpisodeNum = drama.activeEpisodeNumber;
       if (_pageController != null && _pageController!.hasClients) {
         if (_pageController!.page?.round() != _currentEpisodeNum - 1) {
@@ -133,6 +155,27 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     final c = _videoController;
     _videoController = null;
     _isInitialized = false;
+
+    if (c != null) {
+      try {
+        c.setVolume(0.0);
+        c.pause();
+        c.dispose();
+      } catch (_) {}
+      _allocatedControllers.remove(c);
+    }
+    for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
+      try {
+        ctrl.setVolume(0.0);
+        ctrl.pause();
+        ctrl.dispose();
+      } catch (_) {}
+    }
+    _allocatedControllers.clear();
+
+    if (kIsWeb) {
+      WebVideoInterop.pauseAllWebVideos();
+    }
 
     // Never call setState during dispose or unmount lifecycle!
     if (notify && mounted && !_isDisposed) {
@@ -452,8 +495,9 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
       final oldController = _videoController;
       _videoController = readyCtrl;
-      if (oldController != null) {
+      if (oldController != null && oldController != readyCtrl) {
         try {
+          oldController.setVolume(0.0);
           oldController.pause();
           oldController.dispose();
           _allocatedControllers.remove(oldController);
@@ -534,6 +578,18 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       });
     }
 
+    // CRITICAL: Stop and mute previous video immediately so Episode 1 sound never bleeds into Episode 2!
+    final previousController = _videoController;
+    _videoController = null;
+    if (previousController != null) {
+      try {
+        previousController.setVolume(0.0);
+        previousController.pause();
+        previousController.dispose();
+        _allocatedControllers.remove(previousController);
+      } catch (_) {}
+    }
+
     try {
       debugPrint('[PLAYER]\nepisode=$epNumStr\nstate=initializing\nhost=${safeUri.host}\npath=${safeUri.path}');
 
@@ -549,8 +605,8 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       // Check if stale or user navigated away during async buffer
       if (!mounted || currentSeq != _initSequenceId) {
         try {
-          await controller.pause();
           await controller.setVolume(0.0);
+          await controller.pause();
           await controller.dispose();
           _allocatedControllers.remove(controller);
         } catch (_) {}
@@ -561,8 +617,8 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
       if (drama.currentScreen != AppScreen.player) {
         try {
-          await controller.pause();
           await controller.setVolume(0.0);
+          await controller.pause();
           await controller.dispose();
           _allocatedControllers.remove(controller);
         } catch (_) {}
@@ -572,20 +628,13 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
         return;
       }
 
-      final oldController = _videoController;
       _videoController = controller;
-      if (oldController != null && oldController != controller) {
-        try {
-          await oldController.pause();
-          await oldController.dispose();
-          _allocatedControllers.remove(oldController);
-        } catch (_) {}
-      }
 
       // Purge any lingering orphaned controllers
       for (final ctrl in List<VideoPlayerController>.from(_allocatedControllers)) {
         if (ctrl != _videoController && ctrl != _prebufferedNextController) {
           try {
+            ctrl.setVolume(0.0);
             ctrl.pause();
             ctrl.dispose();
             _allocatedControllers.remove(ctrl);
@@ -774,6 +823,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
     final nextEpNum = _currentEpisodeNum + 1;
     final episodes = drama.getEpisodesForSeries(series.id);
     if (nextEpNum <= episodes.length) {
+      _stopAndMuteCurrentVideo();
       if (_pageController != null && _pageController!.hasClients) {
         _pageController!.animateToPage(
           nextEpNum - 1,
@@ -1143,22 +1193,31 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: PageView.builder(
-          controller: _pageController,
-          scrollDirection: Axis.vertical,
-          physics: const AlwaysScrollableScrollPhysics(),
-          itemCount: episodes.length,
-          onPageChanged: (index) {
-            final targetEp = episodes[index];
-            _currentEpisodeNum = targetEp.episodeNumber;
-            drama.switchEpisode(targetEp.episodeNumber);
-            final isLocked = drama.isEpisodePaywallLocked(targetEp.episodeNumber, seriesId: series.id);
-            if (isLocked) {
-              _pauseForLockedEpisode(targetEp);
-            } else {
-              _checkAndInitVideo(drama, targetEp);
+        body: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            // As soon as user starts swiping vertically between episodes, silence current audio immediately
+            if (notification is ScrollStartNotification && notification.dragDetails != null) {
+              _stopAndMuteCurrentVideo();
             }
+            return false;
           },
+          child: PageView.builder(
+            controller: _pageController,
+            scrollDirection: Axis.vertical,
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: episodes.length,
+            onPageChanged: (index) {
+              _stopAndMuteCurrentVideo();
+              final targetEp = episodes[index];
+              _currentEpisodeNum = targetEp.episodeNumber;
+              drama.switchEpisode(targetEp.episodeNumber);
+              final isLocked = drama.isEpisodePaywallLocked(targetEp.episodeNumber, seriesId: series.id);
+              if (isLocked) {
+                _pauseForLockedEpisode(targetEp);
+              } else {
+                _checkAndInitVideo(drama, targetEp);
+              }
+            },
           itemBuilder: (context, index) {
             final ep = episodes[index];
             final isCurrent = ep.episodeNumber == _currentEpisodeNum;
@@ -1743,8 +1802,9 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
           },
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class _InteractiveScrubberBar extends StatefulWidget {
