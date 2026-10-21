@@ -1466,8 +1466,12 @@ app.get('/api/jobs/:jobId', async (req, res) => {
 
 app.get('/api/admin/dramas', async (req, res, next) => {
   try {
-    const catalog = await feedCacheService.getCatalog({ page: 1, limit: 100, sortBy: 'newest' });
-    res.json({ success: true, count: catalog.total, dramas: catalog.data });
+    const dramas = await db.getAllDramas();
+    const enriched = await Promise.all(dramas.map(async (d) => {
+      const epCount = await db.countEpisodes(d.id);
+      return { ...d, totalEpisodes: epCount };
+    }));
+    res.json({ success: true, count: enriched.length, dramas: enriched });
   } catch (e) {
     next(e);
   }
@@ -1541,17 +1545,13 @@ app.get('/api/admin/users', async (req, res, next) => {
 // Admin Real-time Platform Stats
 app.get('/api/admin/stats', async (req, res, next) => {
   try {
-    const dramas = await db.getAllDramas();
-    let totalEpisodes = 0;
-    for (const d of dramas) {
-      const eps = await db.getEpisodesForSeries(d.id);
-      totalEpisodes += (eps ? eps.length : 0);
-    }
+    const totalSeries = await db.countSeries();
+    const totalEpisodes = await db.countEpisodes();
     const users = await db.getAllUsers();
     const vipCount = users.filter(u => u.isVip).length;
     res.json({
       success: true,
-      totalSeries: dramas.length,
+      totalSeries,
       totalEpisodes,
       activeVipUsers: vipCount,
       monthlyRevenue: vipCount * 599

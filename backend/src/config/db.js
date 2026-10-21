@@ -447,6 +447,11 @@ module.exports = {
           episodeData,
           { upsert: true, new: true }
         );
+        const count = await EpisodeModel.countDocuments({ seriesId: episodeData.seriesId });
+        await SeriesModel.updateOne(
+          { id: episodeData.seriesId },
+          { $set: { totalEpisodes: count } }
+        );
       }
     } catch (e) {
       console.error('[MongoDB Error] addEpisode:', e.message);
@@ -457,12 +462,43 @@ module.exports = {
   async deleteEpisode(id) {
     try {
       if (mongoose.connection.readyState === 1) {
-        await EpisodeModel.deleteOne({ id });
+        const ep = await EpisodeModel.findOne({ $or: [{ id }, { _id: id }] });
+        await EpisodeModel.deleteOne({ $or: [{ id }, { _id: id }] });
+        if (ep && ep.seriesId) {
+          const count = await EpisodeModel.countDocuments({ seriesId: ep.seriesId });
+          await SeriesModel.updateOne(
+            { id: ep.seriesId },
+            { $set: { totalEpisodes: count } }
+          );
+        }
       }
     } catch (e) {
       console.error('[MongoDB Error] deleteEpisode:', e.message);
     }
     return true;
+  },
+
+  async countSeries() {
+    try {
+      if (mongoose.connection.readyState === 1) {
+        return await SeriesModel.countDocuments();
+      }
+    } catch (e) {
+      console.error('[MongoDB Error] countSeries:', e.message);
+    }
+    return memoryState.series.length;
+  },
+
+  async countEpisodes(seriesId = null) {
+    try {
+      if (mongoose.connection.readyState === 1) {
+        const query = seriesId ? { seriesId } : {};
+        return await EpisodeModel.countDocuments(query);
+      }
+    } catch (e) {
+      console.error('[MongoDB Error] countEpisodes:', e.message);
+    }
+    return 0;
   },
 
   async getEpisodesBySeries(seriesId, { page = 1, limit = 50 } = {}) {

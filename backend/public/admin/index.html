@@ -657,6 +657,7 @@
       if (document.getElementById('kpiSeries')) {
         document.getElementById('kpiSeries').innerText = list.length;
       }
+      loadKpiStats();
 
       if (list.length === 0) {
         grid.innerHTML = `
@@ -757,12 +758,33 @@
                 <span class="text-[10px] font-bold px-2 py-0.5 rounded ${e.isVipLocked ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'}">
                   ${e.isVipLocked ? 'VIP PASS' : 'FREE'}
                 </span>
+                <button type="button" onclick="deleteEpisode('${seriesId}', '${e.id || e._id}', ${e.episodeNumber})" class="px-2 py-1 bg-red-950/60 hover:bg-red-600 border border-red-700/50 text-red-300 hover:text-white rounded text-[11px] font-bold transition ml-1" title="Delete Episode from Database">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
               </div>
             </div>
           `).join('');
         }
       } catch (err) {
         document.getElementById('modalEpisodesList').innerHTML = '<div class="text-xs text-red-400 text-center py-4">Error loading episodes</div>';
+      }
+    }
+
+    async function deleteEpisode(seriesId, episodeId, epNum) {
+      if (!confirm(`Are you sure you want to permanently delete Episode ${epNum} from the database?`)) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/episodes/${encodeURIComponent(episodeId)}`, { method: 'DELETE' });
+        if (res.ok) {
+          await loadKpiStats();
+          await renderSeries();
+          const currentModalTitle = document.getElementById('modalStoryTitle').innerText.trim();
+          const currentModalGenre = document.getElementById('modalStoryGenre').innerText.replace('Genre: ', '').trim();
+          await viewStoryEpisodes(seriesId, currentModalTitle, currentModalGenre);
+        } else {
+          alert('Failed to delete episode from server.');
+        }
+      } catch (e) {
+        alert('Server connection error: ' + e.message);
       }
     }
 
@@ -822,6 +844,7 @@
         if (res.ok) {
           await renderSeries();
           await populateSeriesDropdown();
+          await loadKpiStats();
         } else {
           alert('Failed to delete story from server.');
         }
@@ -869,6 +892,7 @@
 
           await renderSeries();
           await populateSeriesDropdown();
+          await loadKpiStats();
 
           setTimeout(() => {
             switchTab('seriesTab');
@@ -989,8 +1013,7 @@
           document.getElementById('epNumber').value = parseInt(epNum, 10) + 1;
           if (document.getElementById('epHlsUrl')) document.getElementById('epHlsUrl').value = '';
 
-          const cur = parseInt(document.getElementById('kpiEpisodes').innerText) || 0;
-          document.getElementById('kpiEpisodes').innerText = cur + 1;
+          await loadKpiStats();
         } else {
           feedback.className = 'p-3 rounded-lg text-xs font-semibold bg-red-900/50 text-red-200 border border-red-700 block';
           feedback.innerText = 'Failed to publish episode to server.';
