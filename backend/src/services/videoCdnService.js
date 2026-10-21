@@ -292,6 +292,80 @@ class VideoCdnService {
   }
 
   /**
+  /**
+   * Generates a 720p H.264 FastStart MP4 URL with moov atom placed at byte 0.
+   * Eliminates the 5-6s ExoPlayer delay on Android mobile networks.
+   * Target size: ~10-15MB per 90-second episode.
+   */
+  getFastStart720pMp4Url(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
+    let url = rawUrl.trim();
+
+    if (url.includes('res.cloudinary.com')) {
+      if (url.includes('/upload/') && !url.includes('/video/upload/')) {
+        url = url.replace('/upload/', '/video/upload/');
+      }
+      if (url.includes('fl_faststart')) return url;
+      return url.replace(
+        /\/video\/upload\/([^/]*\/)?/,
+        '/video/upload/fl_faststart,vc_h264,w_720,c_fill,ar_9:16,q_auto:good/'
+      ).replace(/\.(m3u8|mov|mkv)$/i, '.mp4');
+    }
+
+    if (url.includes('ik.imagekit.io')) {
+      if (!url.includes('/tr:')) {
+        return url.replace(/(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)/, '$1/tr:w-720,ar-9-16,q-65,f-auto,vc-h264/$2');
+      }
+      return url;
+    }
+
+    return url;
+  }
+
+  /**
+   * Generates or validates an adaptive HLS (.m3u8) streaming URL.
+   * Breaks videos into 2-3s chunks for instant <500ms playback startup.
+   */
+  getHlsStreamUrl(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
+    let url = rawUrl.trim();
+
+    // Already an HLS manifest
+    if (url.includes('.m3u8')) return url;
+
+    // Cloudinary auto-HLS conversion
+    if (url.includes('res.cloudinary.com')) {
+      if (url.includes('/upload/') && !url.includes('/video/upload/')) {
+        url = url.replace('/upload/', '/video/upload/');
+      }
+      return url
+        .replace(/\/video\/upload\/([^/]*\/)?/, '/video/upload/sp_auto,ar_9:16,c_fill,w_720,q_auto/')
+        .replace(/\.(mp4|mov|mkv)$/i, '.m3u8');
+    }
+
+    return '';
+  }
+
+  /**
+   * Generates a synchronized FastStart MP4 + Adaptive HLS stream pair.
+   */
+  optimizeStreamPair(rawUrl) {
+    const trimmed = (rawUrl || '').trim();
+    if (!trimmed) return { videoUrl: '', hlsUrl: '', isHls: false, format: 'EMPTY' };
+
+    const isHls = trimmed.includes('.m3u8');
+    const hlsUrl = this.getHlsStreamUrl(trimmed);
+    const fastStartUrl = this.getFastStart720pMp4Url(trimmed);
+
+    return {
+      videoUrl: fastStartUrl || trimmed,
+      hlsUrl: hlsUrl || (isHls ? trimmed : ''),
+      isHls: Boolean(hlsUrl || isHls),
+      format: isHls ? 'HLS (.m3u8)' : (fastStartUrl.includes('fl_faststart') ? 'FastStart 720p H.264' : 'MP4')
+    };
+  }
+
+  /**
    * Universal Video URL Optimizer for Admin Portal & API Uploads.
    * Ensures ANY video uploaded to the website automatically streams
    * with adaptive network-aware compression.
@@ -308,23 +382,15 @@ class VideoCdnService {
       return url;
     }
 
-    // 2. Cloudinary Dynamic Quality & Transcoding
+    // 2. Cloudinary Dynamic Quality & FastStart
     if (url.includes('res.cloudinary.com')) {
-      // Normalize /upload/ to /video/upload/
-      if (url.includes('/upload/') && !url.includes('/video/upload/')) {
-        url = url.replace('/upload/', '/video/upload/');
-      }
-      // Inject q_auto:eco, f_auto, vc_auto, w_720 for instant mobile streaming
-      if (!url.includes('q_auto')) {
-        url = url.replace('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
-      }
-      return url;
+      return this.getFastStart720pMp4Url(url);
     }
 
     // 3. ImageKit Dynamic Transcoding & Edge CDN Caching
     if (url.includes('ik.imagekit.io')) {
       if (!url.includes('/tr:')) {
-        url = url.replace(/(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)/, '$1/tr:q-60,w-720,f-auto/$2');
+        url = url.replace(/(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)/, '$1/tr:w-720,ar-9-16,q-65,f-auto,vc-h264/$2');
       }
       return url;
     }

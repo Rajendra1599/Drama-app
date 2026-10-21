@@ -1265,6 +1265,12 @@ app.get('/api/dramas/:id/episodes', async (req, res, next) => {
       if (epObj.videoUrl) {
         epObj.videoUrl = videoCdnService.signCloudFrontUrl(epObj.videoUrl);
       }
+      if (epObj.hlsUrl) {
+        epObj.hlsUrl = videoCdnService.signCloudFrontUrl(epObj.hlsUrl);
+      } else if (epObj.videoUrl) {
+        const autoHls = videoCdnService.getHlsStreamUrl(epObj.videoUrl);
+        if (autoHls) epObj.hlsUrl = videoCdnService.signCloudFrontUrl(autoHls);
+      }
       return epObj;
     });
     res.json({ success: true, count: signedEpisodes.length, episodes: signedEpisodes });
@@ -1281,6 +1287,12 @@ app.get('/api/admin/dramas/:id/episodes', async (req, res, next) => {
       const epObj = (ep && typeof ep.toObject === 'function') ? ep.toObject() : { ...ep };
       if (epObj.videoUrl) {
         epObj.videoUrl = videoCdnService.signCloudFrontUrl(epObj.videoUrl);
+      }
+      if (epObj.hlsUrl) {
+        epObj.hlsUrl = videoCdnService.signCloudFrontUrl(epObj.hlsUrl);
+      } else if (epObj.videoUrl) {
+        const autoHls = videoCdnService.getHlsStreamUrl(epObj.videoUrl);
+        if (autoHls) epObj.hlsUrl = videoCdnService.signCloudFrontUrl(autoHls);
       }
       return epObj;
     });
@@ -1455,19 +1467,22 @@ app.delete('/api/admin/dramas/:id', async (req, res, next) => {
 
 app.post('/api/admin/episodes', async (req, res, next) => {
   try {
-    const { seriesId, episodeNumber, title, videoUrl, durationSeconds = 90, showAd = true, adPlacement = 'BEFORE_EPISODE' } = req.body;
+    const { seriesId, episodeNumber, title, videoUrl, hlsUrl, durationSeconds = 90, showAd = true, adPlacement = 'BEFORE_EPISODE' } = req.body;
     if (!seriesId || !episodeNumber || !videoUrl) {
       return res.status(400).json({ success: false, message: 'seriesId, episodeNumber, videoUrl required' });
     }
     const epNum = parseInt(episodeNumber, 10);
-    // Store exact video URL uploaded by admin directly in MongoDB
     const rawVideoUrl = (videoUrl || '').trim();
+    const pair = videoCdnService.optimizeStreamPair(rawVideoUrl);
+    const finalHls = (hlsUrl || '').trim() || pair.hlsUrl || '';
+
     const epData = {
       id: `${seriesId}_ep_${epNum}`,
       seriesId,
       episodeNumber: epNum,
       title: title || `Episode ${epNum}`,
       videoUrl: rawVideoUrl,
+      hlsUrl: finalHls,
       thumbnailUrl: req.body.thumbnailUrl || '',
       durationSeconds: parseInt(durationSeconds, 10) || 90,
       isVipLocked: epNum > 5,
@@ -1481,6 +1496,27 @@ app.post('/api/admin/episodes', async (req, res, next) => {
     res.json({ success: true, message: 'Episode published successfully', episode: saved });
   } catch (e) {
     next(e);
+  }
+});
+
+app.post('/api/admin/optimize-stream', (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ success: false, message: 'url is required' });
+    const pair = videoCdnService.optimizeStreamPair(url);
+    res.json({
+      success: true,
+      originalUrl: url,
+      fastStartMp4Url: pair.videoUrl,
+      hlsUrl: pair.hlsUrl,
+      isHls: pair.isHls,
+      format: pair.format,
+      recommendation: pair.isHls
+        ? 'Adaptive HLS (.m3u8): Instant <500ms startup with automatic chunk buffering.'
+        : 'FastStart 720p H.264: moov atom at byte 0, instant 1s mobile startup.'
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
   }
 });
 

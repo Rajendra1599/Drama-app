@@ -341,10 +341,9 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
     _loadedEpisodeId = ep.id;
     _failedEpisodeId = null;
-    debugPrint('🎬 [PLAYER] Initializing ep #${ep.episodeNumber} (${ep.id})');
-    // WORK ITEM 1 & 4: Early CDN connection pre-warming to minimize TLS handshake latency
-    ApiService.prewarmCdnConnection(ep.videoUrl);
-    _initializePlayer(ep.videoUrl);
+    final streamUrl = ep.playStreamUrl;
+    ApiService.prewarmCdnConnection(streamUrl);
+    _initializePlayer(streamUrl);
   }
 
   static String _optimizeVideoUrl(String rawUrl) {
@@ -406,12 +405,13 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
       final nextIndex = _currentEpisodeNum; // 0-indexed next episode (since _currentEpisodeNum is 1-indexed)
       if (nextIndex < allEps.length) {
         final nextEp = allEps[nextIndex];
+        final nextStreamUrl = nextEp.playStreamUrl;
         // Pre-warm next video connection
-        ApiService.prewarmCdnConnection(nextEp.videoUrl);
+        ApiService.prewarmCdnConnection(nextStreamUrl);
         if (kIsWeb) {
-          WebVideoInterop.preloadVideo(_optimizeVideoUrl(nextEp.videoUrl));
+          WebVideoInterop.preloadVideo(_optimizeVideoUrl(nextStreamUrl));
         } else {
-          prebufferVideoUrl(nextEp.videoUrl);
+          prebufferVideoUrl(nextStreamUrl);
         }
       }
     } catch (_) {}

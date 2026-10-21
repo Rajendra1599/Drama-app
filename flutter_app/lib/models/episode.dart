@@ -6,6 +6,7 @@ class Episode {
   final String title;
   final String description;
   final String videoUrl;
+  final String hlsUrl;
   final String thumbnailUrl;
   final int durationSeconds;
   final double fileSizeMb;
@@ -21,6 +22,14 @@ class Episode {
   final bool showAd;
   final String adPlacement;
 
+  /// Fast-path streaming URL prioritizing adaptive HLS (.m3u8) chunks
+  String get playStreamUrl {
+    if (hlsUrl.isNotEmpty && hlsUrl.contains('.m3u8')) {
+      return hlsUrl;
+    }
+    return videoUrl;
+  }
+
   Episode({
     required this.id,
     required this.seriesId,
@@ -29,6 +38,7 @@ class Episode {
     required this.title,
     this.description = '',
     required this.videoUrl,
+    this.hlsUrl = '',
     this.thumbnailUrl = '',
     this.durationSeconds = 90,
     this.fileSizeMb = 25.0,
@@ -55,6 +65,7 @@ class Episode {
       title: json['title']?.toString() ?? 'Episode $epNum',
       description: json['description']?.toString() ?? '',
       videoUrl: json['videoUrl']?.toString() ?? '',
+      hlsUrl: json['hlsUrl']?.toString() ?? '',
       thumbnailUrl: json['thumbnailUrl']?.toString() ?? '',
       durationSeconds: (json['durationSeconds'] as num?)?.toInt() ?? 90,
       fileSizeMb: (json['fileSizeMb'] as num?)?.toDouble() ?? 25.0,
@@ -81,6 +92,7 @@ class Episode {
       'title': title,
       'description': description,
       'videoUrl': videoUrl,
+      'hlsUrl': hlsUrl,
       'thumbnailUrl': thumbnailUrl,
       'durationSeconds': durationSeconds,
       'fileSizeMb': fileSizeMb,
@@ -96,5 +108,55 @@ class Episode {
       'showAd': showAd,
       'adPlacement': adPlacement,
     };
+  }
+
+  Episode copyWith({
+    String? id,
+    String? seriesId,
+    String? seasonId,
+    int? episodeNumber,
+    String? title,
+    String? description,
+    String? videoUrl,
+    String? hlsUrl,
+    String? thumbnailUrl,
+    int? durationSeconds,
+    double? fileSizeMb,
+    String? resolution,
+    String? aspectRatio,
+    String? status,
+    String? monetizationType,
+    int? views,
+    int? likes,
+    int? completionCount,
+    int? releaseAt,
+    bool? isVipLocked,
+    bool? showAd,
+    String? adPlacement,
+  }) {
+    return Episode(
+      id: id ?? this.id,
+      seriesId: seriesId ?? this.seriesId,
+      seasonId: seasonId ?? this.seasonId,
+      episodeNumber: episodeNumber ?? this.episodeNumber,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      videoUrl: videoUrl ?? this.videoUrl,
+      hlsUrl: hlsUrl ?? this.hlsUrl,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      fileSizeMb: fileSizeMb ?? this.fileSizeMb,
+      resolution: resolution ?? this.resolution,
+      aspectRatio: aspectRatio ?? this.aspectRatio,
+      status: status ?? this.status,
+      monetizationType: monetizationType ?? this.monetizationType,
+      views: views ?? this.views,
+      likes: likes ?? this.likes,
+      completionCount: completionCount ?? this.completionCount,
+      releaseAt: releaseAt ?? this.releaseAt,
+      isVipLocked: isVipLocked ?? this.isVipLocked,
+      showAd: showAd ?? this.showAd,
+      adPlacement: adPlacement ?? this.adPlacement,
+    );
   }
 }
