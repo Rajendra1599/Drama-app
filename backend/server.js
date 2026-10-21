@@ -175,6 +175,7 @@ app.get('/api/health', async (req, res) => {
   const dbStatus = db.getDbStatus();
   res.json({
     status: 'OK',
+    version: '2.0.1-cloudfront-signed',
     uptimeSeconds: Math.floor(process.uptime()),
     memoryUsage: process.memoryUsage(),
     database: dbStatus,
@@ -1326,6 +1327,86 @@ app.get('/api/admin/dramas/:id/episodes', async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+});
+
+// Dedicated Playback URL generator for signed AWS CloudFront video streams
+app.get('/api/episodes/:id/playback', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { seriesId, episodeNumber } = req.query;
+
+    let targetEpisode = null;
+    if (seriesId) {
+      const episodes = await db.getEpisodesBySeries(seriesId);
+      targetEpisode = episodes.find(e => e.id === id || (episodeNumber && e.episodeNumber === parseInt(episodeNumber, 10)));
+    }
+
+    let rawVideoUrl = targetEpisode ? targetEpisode.videoUrl : '';
+    if (!rawVideoUrl) {
+      rawVideoUrl = 'https://d28mhdc66x7nyq.cloudfront.net/Baani+Ke+Jhooth+Ko+Vikram+Ne+Maan+Liya+Sach+%F0%9F%98%B1.mp4';
+    }
+
+    const signed = videoCdnService.generateVideoPlaybackUrl(rawVideoUrl, id, 86400);
+    res.json({
+      success: true,
+      episodeId: id,
+      videoUrl: signed.videoUrl,
+      hlsUrl: signed.videoUrl,
+      expiresAt: signed.expiresAt,
+      isProtected: true,
+      provider: 'cloudfront'
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Episode playback authorization
+app.post('/api/episodes/authorize', async (req, res, next) => {
+  try {
+    const { seriesId, episodeNumber, userId } = req.body;
+    const epNum = parseInt(episodeNumber, 10) || 1;
+    const isFree = epNum <= 5;
+
+    let targetUrl = 'https://d28mhdc66x7nyq.cloudfront.net/Baani+Ke+Jhooth+Ko+Vikram+Ne+Maan+Liya+Sach+%F0%9F%98%B1.mp4';
+    if (seriesId) {
+      const episodes = await db.getEpisodesBySeries(seriesId);
+      const ep = episodes.find(e => e.episodeNumber === epNum);
+      if (ep && ep.videoUrl) targetUrl = ep.videoUrl;
+    }
+
+    const signed = videoCdnService.generateVideoPlaybackUrl(targetUrl, `${seriesId}_ep_${epNum}`, 86400);
+
+    res.json({
+      authorized: isFree,
+      reason: isFree ? 'FREE_EPISODE' : 'VIP_MEMBERSHIP_REQUIRED',
+      episodeNumber: epNum,
+      streamUrl: signed.videoUrl,
+      hlsDelivery: false,
+      videoUrl: signed.videoUrl
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// View counter endpoint
+app.post('/api/episodes/view', async (req, res, next) => {
+  try {
+    const { seriesId, episodeNumber, userId } = req.body;
+    if (seriesId) {
+      await viewCounterService.recordView(seriesId, episodeNumber || 1, userId || 'anon', req.ip);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false });
+  }
+});
+
+// Direct S3/CloudFront upload signature endpoint
+app.get('/api/episodes/direct-upload-signature', (req, res) => {
+  const sig = videoCdnService.createUploadSignature();
+  res.json({ success: true, ...sig });
 });
 
 app.get('/api/feed/trending', async (req, res, next) => {

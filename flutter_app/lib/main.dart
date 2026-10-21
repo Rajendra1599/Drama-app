@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'config/theme.dart';
+import 'config/api_config.dart';
 import 'models/user_role.dart';
 import 'providers/auth_provider.dart';
 import 'providers/drama_provider.dart';
@@ -74,6 +75,9 @@ void main() async {
   } catch (e) {
     debugPrint('⚠️ [Init] RewardedAdManager init error: $e');
   }
+
+  // Auto-detect optimal backend (USB localhost / Wi-Fi LAN / Live Cloud)
+  ApiConfig.autoDetectBackend();
 
   runApp(
     MultiProvider(

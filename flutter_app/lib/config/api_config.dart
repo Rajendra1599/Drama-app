@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:http/http.dart' as http;
 
 class ApiConfig {
   // Live Production Hosted URL
@@ -9,13 +10,43 @@ class ApiConfig {
   static const String lanBaseUrl = 'http://192.168.1.33:5000';
 
   static String _overrideBaseUrl = '';
+  // Default to liveBaseUrl for real mobile devices so standalone app on 4G/Wi-Fi works immediately
+  static String _activeBaseUrl = liveBaseUrl;
+  static bool _hasProbed = false;
 
   static String get baseUrl {
     if (_overrideBaseUrl.isNotEmpty) return _overrideBaseUrl;
-    if (kDebugMode || kIsWeb) {
-      return localBaseUrl;
-    }
-    return liveBaseUrl;
+    if (kIsWeb) return localBaseUrl;
+    return _activeBaseUrl;
+  }
+
+  static Future<void> autoDetectBackend() async {
+    if (_hasProbed || kIsWeb) return;
+    _hasProbed = true;
+
+    // 1. Probe Localhost via USB ADB reverse (300ms)
+    try {
+      final res = await http.get(Uri.parse('$localBaseUrl/health/live')).timeout(const Duration(milliseconds: 300));
+      if (res.statusCode == 200) {
+        _activeBaseUrl = localBaseUrl;
+        debugPrint('⚡ [ApiConfig] Localhost USB backend connected (0ms)');
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Probe LAN IP over local Wi-Fi (400ms)
+    try {
+      final res = await http.get(Uri.parse('$lanBaseUrl/health/live')).timeout(const Duration(milliseconds: 400));
+      if (res.statusCode == 200) {
+        _activeBaseUrl = lanBaseUrl;
+        debugPrint('⚡ [ApiConfig] Local Wi-Fi LAN backend connected ($lanBaseUrl)');
+        return;
+      }
+    } catch (_) {}
+
+    // 3. Fallback to live production hosted backend
+    _activeBaseUrl = liveBaseUrl;
+    debugPrint('🌐 [ApiConfig] Live production backend active ($liveBaseUrl)');
   }
 
   static void useLive() {

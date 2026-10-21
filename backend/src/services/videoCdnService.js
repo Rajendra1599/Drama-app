@@ -21,6 +21,34 @@ const VIDEO_CDN_BASE_URL = (process.env.VIDEO_CDN_BASE_URL || 'https://d28mhdc66
 const CLOUDFRONT_KEY_PAIR_ID = process.env.CLOUDFRONT_KEY_PAIR_ID || 'K14SZHS1YOCZG1';
 let cloudFrontPrivateKey = null;
 
+const EMBEDDED_CLOUDFRONT_PRIVATE_KEY = `-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAkh8kZwHQvwVXjov57Jeqz5c2t9vPTbiGUv22E8LYY1qlBDBV
+jedQHIAUo2AQw8nTs20MZ2M0SyBV80RlUB+gkL6vDImOBcY0ANslhFF9DMIA6325
+hTQKuR7/5rI+XNn7sQ5uHpqEzlwQtnAnfbn2CZOItqRXEbfxtaKBhdQu38VJwc5f
+szGKD5jve6SssEaaGw0bNz+lDqnmaK+egLvJlkmL/WlS7xR0OV0arsg70yIRZenr
+KiXMnSGkGsnoXc9rF/LKh0uPl8Gg8YoQ4l9w1yxqafe1TXAZhVKNSGrcTAz5B/Gs
+kvn4CT93l2rMW57WyfJs70CPMeoevIaOuyLW7QIDAQABAoIBAAJWjpCPY4sK8ixi
+aldc00DgceGzRLfrp0qWALSEPk4orydIAWEfPcBBqb2LgKPWtj/SvjYRTPmUGjal
+oNwNWtZgwWWj9dUl0hiJaSpFhjNkD1EKq/ieV+WVF2crnE/ZX8D6Mszj5Wgf6lc2
+UuDHeaZhk/hy3L8jKwegWA46J53bq3GC05WWzN5GNJqV1400Bo0ePECSB/l26zTh
+aCKKWbF8lF6Fz5rD5Rsgje5VZbaxPmZOmASfZzq3kbC3LVcbH2fu8IEv1/+WtYeD
+swZcUiLEoRA09xGxCW5HFLDrgDsKehqHHNZulF+VZLyKZHWz+d/kJxhNrxSC2/+X
+z35GncECgYEAyKq/fbtH2ws5luziBooNvAJueFPlxGtVwuG2yI+B0Bd5Zu3rP9X2
+ki3Hw97bKUfBmdqqehP60owv1UTAOW/yZont8PwbYUMd8HTJBSWRmVfuaqceW8vA
+dmEdk3okpgHVVA8KyeHpFMF2x30+szSDlsVc8pGtWnJh4Miykxh+u0UCgYEAumn+
+LYtEYm0+lRGpjXtxEzKhOy9I0aAuYWt7HEL4KwKSLHDFU5FYgMyFS12t6lL+4Mmp
+osC0XvCGnxT4vnvT8RfH4C96Gp023VnKByp9+ZIYxXTi9zXSBzwrIySlTPEvY/Q1
++O+z7QFfJm9WqAVPwewAplvB5uhlc9+xtCsok4kCgYAuk9OW752iLlzTt3BPbEP7
+2+SgcXjnurJRZerzarwK/SfkyFzOmG9/RrkTserVDh7WA3eGlpSlwnxn2Gl165Is
+Ut+0DBCe5uFQKwtt8mZ1XX+tqdTWIdkuoSQoUzWmgs5tkIBEk/dyJeXYMC4Zkpro
+qC8G7uF6GQq3Dl7E3e6ssQKBgFDFzpITbz0q0twqvAoG+9bysDQB6A6U1qP1u3Fi
+fz+7rHS/JHFyYCPm+rbOT6Zh8fiayPsxfrZIiDx0DNgUtaAYys2UJNdVWcmNt2Fl
+gxJZwIwGerXdRzVFV/exUELHmt43mg9UZeUDHCR+R9EkBAwl454x0hHojtUnj0tf
+DATpAoGBAKj2ziakp7mwYcyieYwOAK5E4Id1zQsPvmKxZ26gbwoN4fJ6zJQu8hrj
+3OQ2I05D1MoKa1pyPv9rl71Wh4kD8i3j/D5kKiZF6GYXuHQ222rJ2DQ3XdtUpceb
+lrhtTsYcYL31GKLqpmZxP2dXWXDhzd0dvaFGqMj/PZZIvRCAaCnk
+-----END RSA PRIVATE KEY-----`;
+
 function getCloudFrontPrivateKey() {
   if (cloudFrontPrivateKey) return cloudFrontPrivateKey;
 
@@ -57,8 +85,16 @@ function getCloudFrontPrivateKey() {
       }
     }
   } catch (err) {
-    console.error('[CloudFront] Error loading private key:', err.message);
+    console.error('[CloudFront] Error loading private key from disk:', err.message);
   }
+
+  // 3. Robust Embedded Key Fallback (ensures 100% signing uptime on Render / Docker / cloud)
+  if (EMBEDDED_CLOUDFRONT_PRIVATE_KEY) {
+    cloudFrontPrivateKey = EMBEDDED_CLOUDFRONT_PRIVATE_KEY;
+    console.log('[CloudFront] Private key loaded from embedded production fallback');
+    return cloudFrontPrivateKey;
+  }
+
   return null;
 }
 
