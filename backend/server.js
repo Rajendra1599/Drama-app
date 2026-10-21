@@ -1630,6 +1630,23 @@ app.post('/api/admin/optimize-stream', (req, res) => {
   }
 });
 
+app.get('/api/admin/sign-preview', (req, res) => {
+  try {
+    const rawUrl = req.query.url;
+    if (!rawUrl) {
+      return res.status(400).json({ success: false, message: 'URL query parameter required' });
+    }
+    const signed = videoCdnService.generateVideoPlaybackUrl(rawUrl, 'admin_preview', 86400);
+    res.json({
+      success: signed.success,
+      videoUrl: signed.videoUrl,
+      error: signed.error || null
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
 
 app.delete('/api/admin/episodes/:id', async (req, res, next) => {
   try {
