@@ -832,18 +832,6 @@
       feedback.className = 'p-3 rounded-lg text-xs font-semibold bg-blue-900/50 text-blue-200 border border-blue-700 block';
       feedback.innerText = 'Uploading and publishing episode to app...';
 
-      let formattedVideoUrl = videoUrl;
-      if (formattedVideoUrl.includes('res.cloudinary.com')) {
-        if (formattedVideoUrl.includes('/upload/') && !formattedVideoUrl.includes('/video/upload/')) {
-          formattedVideoUrl = formattedVideoUrl.replace('/upload/', '/video/upload/');
-        }
-        if (!formattedVideoUrl.includes('q_auto')) {
-          formattedVideoUrl = formattedVideoUrl.replace('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
-        }
-      } else if (formattedVideoUrl.includes('ik.imagekit.io') && !formattedVideoUrl.includes('/tr:')) {
-        formattedVideoUrl = formattedVideoUrl.replace(/(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)/, '$1/tr:q-60,w-720,f-auto/$2');
-      }
-
       try {
         const res = await fetch(`${API_BASE}/api/admin/episodes`, {
           method: 'POST',
@@ -852,8 +840,8 @@
             seriesId,
             episodeNumber: parseInt(epNum, 10),
             title,
-            videoUrl: formattedVideoUrl,
-            })
+            videoUrl: videoUrl,
+          })
         });
 
         if (res.ok) {

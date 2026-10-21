@@ -350,37 +350,9 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   static String _optimizeVideoUrl(String rawUrl) {
     var url = rawUrl.trim();
     if (url.isEmpty) return url;
-
-    // 1. AWS CloudFront Fast Edge CDN Streaming (Zero latency, direct playback)
-    if (url.contains('cloudfront.net') || url.contains('.amazonaws.com')) {
-      if (url.startsWith('http://')) {
-        url = url.replaceFirst('http://', 'https://');
-      }
-      return url;
+    if (url.startsWith('http://')) {
+      url = url.replaceFirst('http://', 'https://');
     }
-
-    // 2. Cloudinary fast streaming & instant compression
-    if (url.contains('res.cloudinary.com')) {
-      if (url.contains('/upload/') && !url.contains('/video/upload/')) {
-        url = url.replaceFirst('/upload/', '/video/upload/');
-      }
-      if (!url.contains('q_auto')) {
-        url = url.replaceFirst('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
-      }
-      return url;
-    }
-
-    // 3. ImageKit.io Fast Edge CDN Transcoding & Auto-Streaming
-    if (url.contains('ik.imagekit.io')) {
-      if (!url.contains('/tr:')) {
-        url = url.replaceFirstMapped(
-          RegExp(r'(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)'),
-          (match) => '${match.group(1)}/tr:q-60,w-720,f-auto/${match.group(2)}',
-        );
-      }
-      return url;
-    }
-
     return url;
   }
 
@@ -446,7 +418,7 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
   }
 
   Future<void> _initializePlayer(String rawUrl, {bool isRetryAfter403 = false}) async {
-    var trimmedUrl = _optimizeVideoUrl(rawUrl);
+    final trimmedUrl = _optimizeVideoUrl(rawUrl);
     if (trimmedUrl.isEmpty) {
       return;
     }
@@ -461,36 +433,6 @@ class _VerticalPlayerScreenState extends State<VerticalPlayerScreen> with Widget
 
     final drama = Provider.of<DramaProvider>(context, listen: false);
     final ep = drama.currentEpisode;
-
-    // Check if CloudFront video is missing signed URL parameters (Key-Pair-Id, Signature)
-    final bool isCloudFront = trimmedUrl.contains('.cloudfront.net');
-    final bool isMissingSigningParams = isCloudFront && (!trimmedUrl.contains('Key-Pair-Id=') || !trimmedUrl.contains('Signature='));
-    final bool isRelativeS3Key = !trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://');
-
-    if ((isMissingSigningParams || isRelativeS3Key) && ep != null) {
-      if (mounted) {
-        setState(() {
-          _isRefreshingToken = true;
-          _playerErrorMessage = 'Authorizing secure video stream...';
-        });
-      }
-      final playback = await ApiService.fetchPlaybackUrl(
-        ep.id,
-        seriesId: ep.seriesId,
-        episodeNumber: ep.episodeNumber,
-      );
-      if (mounted) {
-        setState(() {
-          _isRefreshingToken = false;
-        });
-      }
-      if (playback != null && playback['videoUrl'] != null) {
-        final freshUrl = playback['videoUrl'].toString();
-        drama.updateEpisodeVideoUrl(ep.seriesId, ep.id, freshUrl);
-        trimmedUrl = _optimizeVideoUrl(freshUrl);
-        _targetLoadingUrl = trimmedUrl;
-      }
-    }
 
     final safeUri = _buildSafeVideoUri(trimmedUrl);
     final epNumStr = 'ep_${ep?.episodeNumber ?? _currentEpisodeNum}';

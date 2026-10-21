@@ -958,6 +958,197 @@ app.post('/api/episodes/authorize', async (req, res, next) => {
 });
 
 /**
+ * Dedicated Video Playback URL Endpoint
+ * GET /api/episodes/:id/playback
+ * 
+ * - Looks up episode by ID or seriesId + episodeNumber
+ * - Verifies user authorization (Episodes 1-5 free / ad-supported, 6+ VIP)
+ * - Canonicalizes S3 object key / CloudFront URL
+ * - Generates cryptographically valid CloudFront signed URL with Expires, Signature, Key-Pair-Id
+ * - Emits required server-side audit logs: [VIDEO_AUTH], [VIDEO_SIGN], [VIDEO_URL]
+ */
+app.get('/api/episodes/:id/playback', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { seriesId, episodeNumber, userId = 'anon' } = req.query;
+
+    let ep = await db.getEpisodeById(id);
+    if (!ep && seriesId && episodeNumber) {
+      ep = await db.getEpisode(seriesId, parseInt(episodeNumber, 10));
+    }
+    if (!ep && id.includes('_ep_')) {
+      const parts = id.split('_ep_');
+      ep = await db.getEpisode(parts[0], parseInt(parts[1], 10));
+    }
+
+    if (!ep) {
+      return res.status(404).json({
+        success: false,
+        message: `Episode '${id}' not found in catalog`
+      });
+    }
+
+    const num = ep.episodeNumber || 1;
+    const adConfig = await db.getAdConfig();
+    const bypassPayment = adConfig && adConfig.bypassPayment;
+
+    // Check VIP paywall if episode > 5
+    if (num > 5 && !bypassPayment) {
+      const sub = userId && userId !== 'anon' ? await db.getSubscription(userId) : null;
+      const isVip = sub && sub.status === 'ACTIVE' && Date.now() < sub.validUntilEpoch;
+      if (!isVip) {
+        return res.status(403).json({
+          success: false,
+          authorized: false,
+          reason: 'VIP_MEMBERSHIP_REQUIRED',
+          episodeId: ep.id,
+          episodeNumber: num,
+          message: 'Episode 6+ requires VIP Membership or 1-Day Free Trial.'
+        });
+      }
+    }
+
+    // Generate signed CloudFront playback URL
+    const playbackData = videoCdnService.generateVideoPlaybackUrl(ep.videoUrl, ep.id, 86400);
+
+    if (!playbackData.success && playbackData.isProtected) {
+      return res.status(500).json({
+        success: false,
+        message: playbackData.error || 'Failed to generate signed video URL'
+      });
+    }
+
+    res.json({
+      success: true,
+      episodeId: ep.id,
+      episodeNumber: ep.episodeNumber,
+      seriesId: ep.seriesId,
+      title: ep.title,
+      isVipLocked: ep.isVipLocked,
+      videoUrl: playbackData.videoUrl,
+      expiresAt: playbackData.expiresAt,
+      isProtected: playbackData.isProtected,
+      provider: playbackData.provider
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Sign preview video URL for Admin Web Portal
+ * Allows the browser in the admin panel to preview restricted CloudFront videos
+ */
+app.get('/api/admin/sign-preview', (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ success: false, message: 'url query parameter required' });
+    const signedData = videoCdnService.generateVideoPlaybackUrl(url, 'admin_preview', 86400);
+    return res.json({
+      success: true,
+      videoUrl: signedData.videoUrl || url
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * Smart Link Inspector & Meta Extractor
+ * Resolves redirects (CloudFront dynamic links, OTT share links), decodes embedded drama info,
+ * and checks stream reachability / token status.
+ */
+app.post('/api/admin/resolve-link', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || !url.trim()) {
+      return res.status(400).json({ success: false, message: 'url is required' });
+    }
+
+    const https = require('https');
+    const http = require('http');
+    const { URL } = require('url');
+
+    let currentUrl = url.trim();
+    let redirects = 0;
+    const maxRedirects = 5;
+
+    while (redirects < maxRedirects) {
+      let parsed;
+      try {
+        parsed = new URL(currentUrl);
+      } catch (e) {
+        return res.status(400).json({ success: false, message: 'Invalid URL format' });
+      }
+
+      const client = parsed.protocol === 'https:' ? https : http;
+      const resp = await new Promise((resolve, reject) => {
+        const r = client.get(currentUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        }, resolve);
+        r.on('error', reject);
+      });
+
+      if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+        currentUrl = new URL(resp.headers.location, currentUrl).href;
+        redirects++;
+        continue;
+      }
+
+      let body = '';
+      for await (const chunk of resp) {
+        if (body.length < 50000) body += chunk;
+      }
+
+      const finalUrlObj = new URL(currentUrl);
+      let meta = {
+        success: true,
+        sourceUrl: url,
+        finalUrl: currentUrl,
+        statusCode: resp.statusCode,
+        contentType: resp.headers['content-type'] || ''
+      };
+
+      // Check if it's an app share link with base64 'detail'
+      if (finalUrlObj.searchParams.has('detail')) {
+        try {
+          const rawDetail = finalUrlObj.searchParams.get('detail').replace(/ /g, '+');
+          const jsonStr = Buffer.from(rawDetail, 'base64').toString('utf8');
+          const data = JSON.parse(jsonStr);
+          meta.type = 'app_share_link';
+          meta.title = data.name || '';
+          meta.coverUrl = data.cover || '';
+          meta.description = data.description || '';
+          meta.videoUrl = data.preview || '';
+        } catch (e) {
+          meta.detailParseError = e.message;
+        }
+      } else if (resp.headers['content-type'] && resp.headers['content-type'].includes('video')) {
+        meta.type = 'direct_video';
+        meta.videoUrl = currentUrl;
+      } else {
+        const titleMatch = body.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i);
+        const imageMatch = body.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
+        const descMatch = body.match(/<meta property=["']og:description["'] content=["']([^"']+)["']/i);
+        const videoMatch = body.match(/<meta property=["']og:video["'] content=["']([^"']+)["']/i);
+        if (titleMatch) meta.title = titleMatch[1];
+        if (imageMatch) meta.coverUrl = imageMatch[1];
+        if (descMatch) meta.description = descMatch[1];
+        if (videoMatch) meta.videoUrl = videoMatch[1];
+      }
+
+      return res.json(meta);
+    }
+
+    return res.status(400).json({ success: false, message: 'Too many redirects' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
  * Direct-to-Cloudinary Upload Signature
  * Allows Creator Studio / Admin to upload video directly from device to CDN
  */
@@ -1071,7 +1262,7 @@ app.get('/api/dramas/:id/episodes', async (req, res, next) => {
     const episodes = await db.getEpisodesBySeries(id);
     const signedEpisodes = episodes.map(ep => {
       const epObj = (ep && typeof ep.toObject === 'function') ? ep.toObject() : { ...ep };
-      if (epObj.videoUrl && epObj.videoUrl.includes('.cloudfront.net')) {
+      if (epObj.videoUrl) {
         epObj.videoUrl = videoCdnService.signCloudFrontUrl(epObj.videoUrl);
       }
       return epObj;
@@ -1088,7 +1279,7 @@ app.get('/api/admin/dramas/:id/episodes', async (req, res, next) => {
     const episodes = await db.getEpisodesBySeries(id);
     const signedEpisodes = episodes.map(ep => {
       const epObj = (ep && typeof ep.toObject === 'function') ? ep.toObject() : { ...ep };
-      if (epObj.videoUrl && epObj.videoUrl.includes('.cloudfront.net')) {
+      if (epObj.videoUrl) {
         epObj.videoUrl = videoCdnService.signCloudFrontUrl(epObj.videoUrl);
       }
       return epObj;
@@ -1269,15 +1460,15 @@ app.post('/api/admin/episodes', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'seriesId, episodeNumber, videoUrl required' });
     }
     const epNum = parseInt(episodeNumber, 10);
-    const optimizedVideoUrl = videoCdnService.optimizeVideoUrlForStreaming(videoUrl);
-    const optimizedThumbnailUrl = req.body.thumbnailUrl || videoCdnService.getCloudinaryThumbnailFromVideo(optimizedVideoUrl);
+    // Store exact video URL uploaded by admin directly in MongoDB
+    const rawVideoUrl = (videoUrl || '').trim();
     const epData = {
       id: `${seriesId}_ep_${epNum}`,
       seriesId,
       episodeNumber: epNum,
       title: title || `Episode ${epNum}`,
-      videoUrl: optimizedVideoUrl,
-      thumbnailUrl: optimizedThumbnailUrl,
+      videoUrl: rawVideoUrl,
+      thumbnailUrl: req.body.thumbnailUrl || '',
       durationSeconds: parseInt(durationSeconds, 10) || 90,
       isVipLocked: epNum > 5,
       showAd: showAd !== false && showAd !== 'false',
@@ -1286,6 +1477,7 @@ app.post('/api/admin/episodes', async (req, res, next) => {
     };
 
     const saved = await db.addEpisode(epData);
+    await feedCacheService.invalidateCache();
     res.json({ success: true, message: 'Episode published successfully', episode: saved });
   } catch (e) {
     next(e);

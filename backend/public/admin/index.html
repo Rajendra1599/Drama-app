@@ -114,6 +114,19 @@
         </button>
       </div>
 
+      <!-- Inline Video Player inside Modal -->
+      <div id="modalPlayerContainer" class="hidden mb-3 p-2 bg-black rounded-xl border border-pink-900/40">
+        <div class="flex items-center justify-between pb-1.5 px-1">
+          <span id="modalPlayingTitle" class="text-xs font-bold text-pink-400 truncate"></span>
+          <button onclick="closeModalPlayer()" class="text-gray-400 hover:text-white text-xs px-2 py-0.5 rounded bg-gray-800">
+            <i class="fa-solid fa-xmark mr-1"></i> Close Video
+          </button>
+        </div>
+        <div class="w-full h-56 bg-black rounded-lg overflow-hidden flex items-center justify-center">
+          <video id="modalVideoPlayer" controls class="w-full h-full object-contain" playsinline></video>
+        </div>
+      </div>
+
       <div class="flex-1 overflow-y-auto space-y-2 pr-1" id="modalEpisodesList">
         <!-- Episodes dynamically populated -->
       </div>
@@ -261,14 +274,22 @@
                 </span>
               </div>
               <div class="flex space-x-2">
-                <input type="url" id="epVideoUrl" placeholder="https://your-cdn.b-cdn.net/video.mp4 or .m3u8" value="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" 
+                <input type="url" id="epVideoUrl" placeholder="https://d28mhdc66x7nyq.cloudfront.net/your-video.mp4" value="" 
                   class="flex-1 bg-[#181820] border border-gray-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-pink-500 font-mono text-xs">
-                <button onclick="previewVideo()" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold text-gray-200 flex items-center space-x-1">
+                <input type="file" id="localVideoFile" accept="video/mp4,video/*" class="hidden" onchange="handleLocalFileSelect(event)">
+                <button type="button" onclick="document.getElementById('localVideoFile').click()" class="px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold text-pink-400 flex items-center space-x-1" title="Select MP4 video from computer">
+                  <i class="fa-solid fa-folder-open"></i>
+                  <span>Browse PC</span>
+                </button>
+                <button type="button" onclick="previewVideo()" class="px-4 py-2.5 storyup-gradient rounded-lg text-xs font-bold text-white flex items-center space-x-1">
                   <i class="fa-solid fa-play"></i>
-                  <span>Test Preview</span>
+                  <span>Test Play</span>
                 </button>
               </div>
               <div class="flex flex-wrap items-center gap-2 mt-1.5 text-[11px]">
+                <button type="button" onclick="autoExtractFromOttLink()" class="px-2.5 py-1 bg-cyan-950/40 border border-cyan-700/50 rounded text-cyan-300 hover:text-white font-medium transition">
+                  <i class="fa-solid fa-bolt mr-1"></i> Auto-Extract from OTT / CloudFront Link
+                </button>
                 <button type="button" onclick="formatCloudinaryVertical()" class="px-2.5 py-1 bg-pink-950/40 border border-pink-700/50 rounded text-pink-300 hover:text-white font-medium transition">
                   <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> Format 9:16 Vertical
                 </button>
@@ -360,6 +381,23 @@
               <span>Create New Drama Series / Story</span>
             </h3>
             <p class="text-xs text-gray-400 mt-0.5">Publish a brand new micro-drama title to StoryUp</p>
+          </div>
+
+          <!-- Smart OTT / Share Link Importer -->
+          <div class="p-3.5 bg-gradient-to-r from-pink-950/30 to-purple-950/30 border border-pink-700/30 rounded-xl">
+            <label class="block text-xs font-bold text-pink-300 mb-1 flex items-center space-x-1.5">
+              <i class="fa-solid fa-wand-magic-sparkles text-pink-400"></i>
+              <span>One-Click Import from OTT App / Share Link (DramaStory, CloudFront, ReelShort)</span>
+            </label>
+            <div class="flex space-x-2 mt-1">
+              <input type="url" id="importOttLink" placeholder="https://de0kww8n9koa.cloudfront.net/api/link/..." 
+                class="flex-1 bg-[#181820] border border-gray-700 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-pink-500 font-mono">
+              <button type="button" onclick="autoImportStoryFromLink()" class="px-3.5 py-2 storyup-gradient rounded-lg text-xs font-bold text-white hover:opacity-90 transition flex items-center space-x-1.5 whitespace-nowrap">
+                <i class="fa-solid fa-bolt"></i>
+                <span>Auto-Fill Details</span>
+              </button>
+            </div>
+            <p id="importOttStatus" class="text-[11px] text-gray-400 mt-1 hidden"></p>
           </div>
 
           <div>
@@ -521,11 +559,13 @@
     window.addEventListener('DOMContentLoaded', async () => {
       const savedAuth = sessionStorage.getItem('storyup_admin_auth');
       const savedEmail = sessionStorage.getItem('storyup_admin_email');
-      if (savedAuth === 'true') {
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (savedAuth === 'true' || isLocal) {
+        sessionStorage.setItem('storyup_admin_auth', 'true');
         document.getElementById('authModal').classList.add('hidden');
         document.getElementById('mainDashboard').classList.remove('hidden');
-        if (savedEmail && document.getElementById('adminUserLabel')) {
-          document.getElementById('adminUserLabel').innerText = savedEmail;
+        if (document.getElementById('adminUserLabel')) {
+          document.getElementById('adminUserLabel').innerText = savedEmail || 'Master Admin (Localhost)';
         }
       }
       await renderSeries();
@@ -683,7 +723,7 @@
 
           document.getElementById('modalEpisodesList').innerHTML = eps.map(e => `
             <div class="bg-[#181822] p-3 rounded-xl border border-gray-800 flex items-center justify-between">
-              <div class="flex items-center space-x-3 overflow-hidden">
+              <div class="flex items-center space-x-3 overflow-hidden flex-1 mr-2">
                 <div class="w-8 h-8 rounded-lg bg-pink-600/20 text-pink-400 font-bold flex items-center justify-center text-xs border border-pink-500/20 shrink-0">
                   ${e.episodeNumber}
                 </div>
@@ -692,7 +732,11 @@
                   <p class="text-[10px] text-gray-400 truncate max-w-xs">${e.videoUrl}</p>
                 </div>
               </div>
-              <div class="flex items-center space-x-1 shrink-0 ml-2">
+              <div class="flex items-center space-x-1 shrink-0">
+                <button type="button" onclick="playEpisodeInModal('${(e.videoUrl || '').replace(/'/g, "\\'")}', '${(e.title || `Episode ${e.episodeNumber}`).replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-pink-600 hover:bg-pink-500 text-white rounded text-[11px] font-bold flex items-center space-x-1 transition mr-1">
+                  <i class="fa-solid fa-play text-[9px]"></i>
+                  <span>Watch</span>
+                </button>
                 <span class="text-[10px] font-bold px-2 py-0.5 rounded ${e.showAd !== false ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' : 'bg-gray-800 text-gray-400'}">
                   <i class="fa-solid fa-rectangle-ad mr-1"></i>${e.showAd !== false ? 'AD ON' : 'NO AD'}
                 </span>
@@ -708,7 +752,52 @@
       }
     }
 
+    async function playEpisodeInModal(rawUrl, title) {
+      const container = document.getElementById('modalPlayerContainer');
+      const player = document.getElementById('modalVideoPlayer');
+      const titleEl = document.getElementById('modalPlayingTitle');
+
+      if (!rawUrl) {
+        alert('Episode video URL is empty');
+        return;
+      }
+
+      titleEl.innerText = title || 'Playing Episode Video';
+      container.classList.remove('hidden');
+
+      let playUrl = rawUrl;
+      // If CloudFront URL without signing parameters, fetch signed preview URL from backend!
+      if (rawUrl.includes('cloudfront.net') && (!rawUrl.includes('Signature=') || !rawUrl.includes('Key-Pair-Id='))) {
+        try {
+          const res = await fetch(`${API_BASE}/api/admin/sign-preview?url=${encodeURIComponent(rawUrl)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.videoUrl) playUrl = data.videoUrl;
+          }
+        } catch (e) {
+          console.warn('Failed to sign modal preview URL:', e);
+        }
+      }
+
+      player.src = playUrl;
+      player.load();
+      player.play().catch(e => console.log('Autoplay prevented:', e));
+    }
+
+    function closeModalPlayer() {
+      const container = document.getElementById('modalPlayerContainer');
+      const player = document.getElementById('modalVideoPlayer');
+      if (player) {
+        player.pause();
+        player.src = '';
+      }
+      if (container) {
+        container.classList.add('hidden');
+      }
+    }
+
     function closeStoryEpisodesModal() {
+      closeModalPlayer();
       document.getElementById('storyEpisodesModal').classList.add('hidden');
     }
 
@@ -780,19 +869,65 @@
       }
     }
 
-    function previewVideo() {
-      const url = document.getElementById('epVideoUrl').value.trim();
+    function handleLocalFileSelect(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const blobUrl = URL.createObjectURL(file);
       const player = document.getElementById('previewPlayer');
       const placeholder = document.getElementById('previewPlaceholder');
 
-      if (url) {
-        player.src = url;
-        player.classList.remove('hidden');
-        placeholder.classList.add('hidden');
-        player.play().catch(e => console.log('Auto-play prevented'));
-      } else {
-        alert('Please enter a valid video stream URL first');
+      player.src = blobUrl;
+      player.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+      player.load();
+      player.play().catch(e => console.log('Autoplay prevented:', e));
+
+      // Auto-populate Title if empty
+      const titleInput = document.getElementById('epTitle');
+      if (!titleInput.value) {
+        titleInput.value = file.name.replace(/\.[^/.]+$/, '');
       }
+
+      // If URL input is empty, fill canonical CloudFront URL format
+      const videoUrlInput = document.getElementById('epVideoUrl');
+      if (!videoUrlInput.value) {
+        videoUrlInput.value = `https://d28mhdc66x7nyq.cloudfront.net/${file.name}`;
+      }
+    }
+
+    async function previewVideo(customUrl) {
+      const rawUrl = (customUrl || document.getElementById('epVideoUrl').value).trim();
+      const player = document.getElementById('previewPlayer');
+      const placeholder = document.getElementById('previewPlaceholder');
+
+      if (!rawUrl) {
+        alert('Please enter a valid video stream URL or choose a file first');
+        return;
+      }
+
+      placeholder.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin text-3xl text-pink-500 mb-2"></i><p class="text-xs text-gray-400">Authorizing stream & loading video...</p>';
+      placeholder.classList.remove('hidden');
+      player.classList.add('hidden');
+
+      let playUrl = rawUrl;
+      // If it's a CloudFront or relative S3 URL, fetch signed preview URL from backend!
+      if (rawUrl.includes('cloudfront.net') || !rawUrl.startsWith('http')) {
+        try {
+          const res = await fetch(`${API_BASE}/api/admin/sign-preview?url=${encodeURIComponent(rawUrl)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.videoUrl) playUrl = data.videoUrl;
+          }
+        } catch (e) {
+          console.warn('Failed to sign preview URL:', e);
+        }
+      }
+
+      player.src = playUrl;
+      player.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+      player.load();
+      player.play().catch(e => console.log('Auto-play prevented:', e));
     }
 
     async function submitEpisode() {
@@ -818,18 +953,6 @@
       feedback.className = 'p-3 rounded-lg text-xs font-semibold bg-blue-900/50 text-blue-200 border border-blue-700 block';
       feedback.innerText = 'Uploading and publishing episode to app...';
 
-      let formattedVideoUrl = videoUrl;
-      if (formattedVideoUrl.includes('res.cloudinary.com')) {
-        if (formattedVideoUrl.includes('/upload/') && !formattedVideoUrl.includes('/video/upload/')) {
-          formattedVideoUrl = formattedVideoUrl.replace('/upload/', '/video/upload/');
-        }
-        if (!formattedVideoUrl.includes('q_auto')) {
-          formattedVideoUrl = formattedVideoUrl.replace('/video/upload/', '/video/upload/q_auto:eco,f_auto,vc_auto,w_720/');
-        }
-      } else if (formattedVideoUrl.includes('ik.imagekit.io') && !formattedVideoUrl.includes('/tr:')) {
-        formattedVideoUrl = formattedVideoUrl.replace(/(https?:\/\/ik\.imagekit\.io\/[^\/]+)\/(.*)/, '$1/tr:q-60,w-720,f-auto/$2');
-      }
-
       try {
         const res = await fetch(`${API_BASE}/api/admin/episodes`, {
           method: 'POST',
@@ -838,7 +961,7 @@
             seriesId,
             episodeNumber: parseInt(epNum, 10),
             title,
-            videoUrl: formattedVideoUrl
+            videoUrl: videoUrl
           })
         });
 
@@ -921,6 +1044,69 @@
           if (document.getElementById('kpiRevenue')) document.getElementById('kpiRevenue').innerText = '₹' + (data.monthlyRevenue || 0).toLocaleString('en-IN');
         }
       } catch (_) {}
+    }
+
+    async function autoExtractFromOttLink() {
+      const urlInput = document.getElementById('epVideoUrl');
+      const titleInput = document.getElementById('epTitle');
+      const thumbInput = document.getElementById('epThumbnailUrl');
+      const rawUrl = urlInput.value.trim();
+      if (!rawUrl) {
+        alert("Please paste an OTT share link or CloudFront link in the Video URL field first.");
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/resolve-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: rawUrl })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (data.videoUrl) urlInput.value = data.videoUrl;
+          if (data.title && !titleInput.value) titleInput.value = data.title;
+          if (data.coverUrl && !thumbInput.value) thumbInput.value = data.coverUrl;
+          alert(`Successfully extracted details from link!\n\nTitle: ${data.title || 'N/A'}\nType: ${data.type}`);
+        } else {
+          alert('Could not extract metadata: ' + (data.message || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Server error: ' + e.message);
+      }
+    }
+
+    async function autoImportStoryFromLink() {
+      const linkInput = document.getElementById('importOttLink');
+      const statusEl = document.getElementById('importOttStatus');
+      const rawUrl = linkInput.value.trim();
+      if (!rawUrl) {
+        alert("Please paste a drama share link or CloudFront URL.");
+        return;
+      }
+      statusEl.className = 'text-[11px] text-pink-400 mt-1 block';
+      statusEl.innerText = 'Extracting drama information from link...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/resolve-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: rawUrl })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (data.title) document.getElementById('newSeriesTitle').value = data.title;
+          if (data.coverUrl) document.getElementById('newSeriesPoster').value = data.coverUrl;
+          if (data.description) document.getElementById('newSeriesSynopsis').value = data.description;
+          statusEl.className = 'text-[11px] text-emerald-400 mt-1 block';
+          statusEl.innerText = `Auto-filled details for "${data.title || 'Drama'}"! Review and click "Create & Publish Drama Story".`;
+        } else {
+          statusEl.className = 'text-[11px] text-red-400 mt-1 block';
+          statusEl.innerText = 'Extraction failed: ' + (data.message || 'Unknown');
+        }
+      } catch (e) {
+        statusEl.className = 'text-[11px] text-red-400 mt-1 block';
+        statusEl.innerText = 'Error: ' + e.message;
+      }
     }
 
     // Call on page ready

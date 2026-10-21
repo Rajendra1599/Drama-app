@@ -28,11 +28,27 @@ let cloudFrontPrivateKey = null;
 
 function getCloudFrontPrivateKey() {
   if (cloudFrontPrivateKey) return cloudFrontPrivateKey;
+
+  // 1. Direct environment variable (crucial for Render / Docker / AWS ECS / Lambda)
+  if (process.env.CLOUDFRONT_PRIVATE_KEY) {
+    let pk = process.env.CLOUDFRONT_PRIVATE_KEY.trim();
+    if (!pk.includes('\n') && pk.includes('\\n')) {
+      pk = pk.replace(/\\n/g, '\n');
+    }
+    if (pk.includes('PRIVATE KEY')) {
+      cloudFrontPrivateKey = pk;
+      console.log('[CloudFront] Private key loaded from process.env.CLOUDFRONT_PRIVATE_KEY');
+      return cloudFrontPrivateKey;
+    }
+  }
+
+  // 2. Candidate disk paths
   try {
     const candidatePaths = [
       process.env.CLOUDFRONT_PRIVATE_KEY_PATH,
       path.join(__dirname, '../../keys/private_key.pem'),
       path.join(__dirname, '../keys/private_key.pem'),
+      path.join(__dirname, '../../backend/keys/private_key.pem'),
       path.join(process.cwd(), 'keys/private_key.pem'),
       path.join(process.cwd(), 'backend/keys/private_key.pem')
     ].filter(Boolean);
@@ -64,29 +80,110 @@ if (CLOUD_NAME && API_KEY && API_SECRET) {
 
 class VideoCdnService {
   /**
-   * Cryptographically signs AWS CloudFront URLs using RSA-SHA1 with canned policy.
-   * Resolves HTTP 403 MissingKey errors for restricted CloudFront distributions.
+   * Dedicated single source of truth for generating signed video playback URLs.
+   * Can receive an S3 object key or a full CloudFront URL.
+   * Resolves canonical object path and signs it deterministically with AWS CloudFront RSA-SHA1.
    */
-  signCloudFrontUrl(videoUrl, expiresInSeconds = 86400) {
-    if (!videoUrl || typeof videoUrl !== 'string') return videoUrl;
-    const url = videoUrl.trim();
-    if (!url.includes('.cloudfront.net')) {
-      return url;
+  generateVideoPlaybackUrl(rawUrlOrObjectKey, episodeId = '', expiresInSeconds = 86400) {
+    if (!rawUrlOrObjectKey || typeof rawUrlOrObjectKey !== 'string') {
+      return { success: false, videoUrl: '', error: 'Missing video URL or object key' };
     }
-    // Prevent double signing
-    if (url.includes('Key-Pair-Id=') && url.includes('Signature=')) {
-      return url;
+
+    const input = rawUrlOrObjectKey.trim();
+    if (!input) {
+      return { success: false, videoUrl: '', error: 'Missing video URL or object key' };
+    }
+
+    // Configured CloudFront distribution domain
+    const configuredHost = (() => {
+      try {
+        return new URL(process.env.VIDEO_CDN_BASE_URL || 'https://d28mhdc66x7nyq.cloudfront.net').hostname.toLowerCase();
+      } catch (_) {
+        return 'd28mhdc66x7nyq.cloudfront.net';
+      }
+    })();
+
+    let urlHost = '';
+    try {
+      if (input.startsWith('http://') || input.startsWith('https://')) {
+        urlHost = new URL(input).hostname.toLowerCase();
+      }
+    } catch (_) {}
+
+    let baseUrl = input.split('?')[0];
+    let objectKey = '';
+
+    // 1. If it's a relative S3 object key (e.g. "videos/ep1.mp4" or "vidssave.com...")
+    if (!input.startsWith('http://') && !input.startsWith('https://')) {
+      objectKey = input.replace(/^\/+/, '');
+      const cdnHost = (process.env.VIDEO_CDN_BASE_URL || 'https://d28mhdc66x7nyq.cloudfront.net').replace(/\/$/, '');
+      baseUrl = `${cdnHost}/${objectKey}`;
+      urlHost = configuredHost;
+    } else if (urlHost !== configuredHost) {
+      // External CDN or third-party provider (e.g. de0kww8n9koa.cloudfront.net, Cloudinary, etc.)
+      // Pass through 100% untouched as saved in database!
+      return {
+        success: true,
+        videoUrl: input,
+        expiresAt: Math.floor(Date.now() / 1000) + expiresInSeconds,
+        isProtected: false,
+        provider: 'direct'
+      };
+    } else {
+      // It is the configured CloudFront host. If already signed, don't re-sign or strip params!
+      if (input.includes('Key-Pair-Id=') && input.includes('Signature=')) {
+        return {
+          success: true,
+          videoUrl: input,
+          expiresAt: Math.floor(Date.now() / 1000) + expiresInSeconds,
+          isProtected: true,
+          provider: 'cloudfront'
+        };
+      }
+      try {
+        const parsed = new URL(baseUrl);
+        objectKey = parsed.pathname.replace(/^\/+/, '');
+      } catch (_) {
+        objectKey = baseUrl;
+      }
+    }
+
+    const dist = configuredHost;
+
+    const now = Math.floor(Date.now() / 1000);
+    // Quantize expiration to 6-hour windows for 100% deterministic signatures
+    const windowSec = 6 * 3600;
+    const bucket = Math.floor(now / windowSec);
+    const expires = (bucket + 1) * windowSec + expiresInSeconds;
+
+    // 1. Check in-memory cache for deterministic matching
+    if (!this._signedUrlCache) this._signedUrlCache = new Map();
+    const cached = this._signedUrlCache.get(baseUrl);
+    if (cached && cached.expires > now + 300) {
+      console.log(`[VIDEO_AUTH] episodeId: ${episodeId || 'direct'} objectKey: ${objectKey}`);
+      console.log(`[VIDEO_SIGN] distribution: ${dist} keyPairId: ${CLOUDFRONT_KEY_PAIR_ID} expiresAt: ${cached.expires} (cached)`);
+      console.log(`[VIDEO_URL] signedUrlGenerated: true`);
+      return {
+        success: true,
+        videoUrl: cached.signedUrl,
+        expiresAt: cached.expires,
+        isProtected: true,
+        provider: 'cloudfront'
+      };
     }
 
     const privateKey = getCloudFrontPrivateKey();
     if (!privateKey) {
-      console.warn('[CloudFront] Private key unavailable for signing:', url);
-      return url;
+      console.error('[CloudFront] CRITICAL: Private key unavailable for signing protected CloudFront URL!');
+      return {
+        success: false,
+        videoUrl: baseUrl,
+        error: 'CloudFront private key not configured on backend',
+        isProtected: true
+      };
     }
 
     try {
-      const [baseUrl] = url.split('?');
-      const expires = Math.floor(Date.now() / 1000) + expiresInSeconds;
       const cannedPolicy = JSON.stringify({
         Statement: [
           {
@@ -107,11 +204,38 @@ class VideoCdnService {
         .replace(/=/g, '_')
         .replace(/\//g, '~');
 
-      return `${baseUrl}?Expires=${expires}&Signature=${signature}&Key-Pair-Id=${CLOUDFRONT_KEY_PAIR_ID}`;
+      const signedUrl = `${baseUrl}?Expires=${expires}&Signature=${signature}&Key-Pair-Id=${CLOUDFRONT_KEY_PAIR_ID}`;
+      this._signedUrlCache.set(baseUrl, { signedUrl, expires });
+
+      console.log(`[VIDEO_AUTH] episodeId: ${episodeId || 'direct'} objectKey: ${objectKey}`);
+      console.log(`[VIDEO_SIGN] distribution: ${dist} keyPairId: ${CLOUDFRONT_KEY_PAIR_ID} expiresAt: ${expires}`);
+      console.log(`[VIDEO_URL] signedUrlGenerated: true`);
+
+      return {
+        success: true,
+        videoUrl: signedUrl,
+        expiresAt: expires,
+        isProtected: true,
+        provider: 'cloudfront'
+      };
     } catch (e) {
       console.error('[CloudFront] Signing error:', e.message);
-      return url;
+      return {
+        success: false,
+        videoUrl: baseUrl,
+        error: e.message,
+        isProtected: true
+      };
     }
+  }
+
+  /**
+   * Cryptographically signs AWS CloudFront URLs using RSA-SHA1 with canned policy.
+   * Resolves HTTP 403 MissingKey errors for restricted CloudFront distributions.
+   */
+  signCloudFrontUrl(videoUrl, expiresInSeconds = 86400) {
+    const res = this.generateVideoPlaybackUrl(videoUrl, '', expiresInSeconds);
+    return res.videoUrl || videoUrl;
   }
 
   /**
@@ -261,15 +385,14 @@ class VideoCdnService {
       .digest('hex');
 
     // If an explicit or custom CDN/media video URL is provided, stream it directly!
-    if (customVideoUrl && typeof customVideoUrl === 'string' && customVideoUrl.startsWith('http')) {
-      const finalUrl = customVideoUrl.includes('.cloudfront.net')
-        ? this.signCloudFrontUrl(customVideoUrl)
-        : customVideoUrl;
+    if (customVideoUrl && typeof customVideoUrl === 'string' && customVideoUrl.trim().length > 0) {
+      const playback = this.generateVideoPlaybackUrl(customVideoUrl, `${seriesId}_ep_${episodeNumber}`, 86400);
+      const finalUrl = playback.videoUrl || customVideoUrl;
       return {
         streamUrl: finalUrl,
         hlsUrl: finalUrl,
         mp4Url: finalUrl,
-        expiresAt,
+        expiresAt: playback.expiresAt || expiresAt,
         token
       };
     }
